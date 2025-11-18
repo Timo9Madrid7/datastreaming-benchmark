@@ -1,0 +1,9 @@
+# Core Consumer Dockerfile
+FROM core_base
+
+# Set working directory
+WORKDIR /app/build/core/applications
+
+# Run the consumer app
+ENTRYPOINT ["./ConsumerApp"]
+CMD [ "INFO", "DEBUG", "ERROR" ]

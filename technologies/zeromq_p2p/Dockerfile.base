@@ -1,0 +1,19 @@
+# Expected name: zeromq_p2p_base
+# ZeroMQP2P Base Dockerfile
+FROM core_base
+
+# Install ZeroMQ-specific dependencies
+RUN apt-get update && apt-get install -y \
+    libzmq3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+RUN mkdir -p /app/technologies
+RUN mkdir -p /app/technologies/zeromq_p2p
+COPY ./technologies/zeromq_p2p /app/technologies/zeromq_p2p
+
+# Build the ZeroMQ-specific library
+RUN cd /app/build && cmake .. &&  cmake --build . --clean-first
+
+# Move shared lib into /app/lib
+RUN mkdir -p /app/lib && cp /app/build/technologies/zeromq_p2p/libzeromq_p2p_technology.so /app/lib/

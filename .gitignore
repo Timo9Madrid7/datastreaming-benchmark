@@ -1,0 +1,63 @@
+# Ignore system files
+.DS_Store Thumbs.db
+
+# Ignore build artifacts
+*.exe
+*.obj
+*.o
+*.dll
+*.lib
+*.pdb
+*.ilk
+*.idb
+*.exp
+
+# Ignore CMake temporary files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+build/
+
+# Ignore VS Code workspace settings
+.vscode/
+*.code-workspace
+
+# Ignore dependency management directories
+vcpkg_installed/
+vcpkg/buildtrees/
+vcpkg/packages/
+
+# Ignore Docker-related files
+*.dockerignore
+docker-compose.override.yml
+
+# Ignore logs, diagrams, data and temporary files
+*.log
+*.tmp
+*.swp
+*.puml
+*.csv
+*.json
+
+# Ignore Python virtual environments (if used for data processing)
+venv/
+__pycache__/
+*.pyc
+
+# Ignore CSV and benchmarking results
+results/*.csv
+logs/
+test_scenarios/
+
+# Ignore environment-specific files
+.env
+
+benchmark_scenarios.json
+test_scenarios/complete_tests.json
+test_scenarios/quick_test.json
+benchmark_scenarios.json
+build_all_images.bat
+analyses/.ipynb_checkpoints/resources_stats-checkpoint.ipynb
+test_scenarios/complete_tests.json
+test_scenarios/quick_test.json

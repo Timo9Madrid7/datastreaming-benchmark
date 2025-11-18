@@ -1,0 +1,9 @@
+# ZeroMQP2P Consumer Dockerfile
+FROM kafka_base
+
+# Set working directory
+WORKDIR /app/build/core/applications
+
+# Run the consumer app
+ENTRYPOINT ["./ConsumerApp"]
+CMD [ "INFO", "DEBUG", "STUDY", "ERROR" ]
