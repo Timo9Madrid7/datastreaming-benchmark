@@ -19,6 +19,7 @@ endif()
 # Add subdirectories
 add_subdirectory(core)
 add_subdirectory(core/applications)
+add_subdirectory(core/tests)
 
 # Maybe wrap these repeated if-blocks in a function/macro or table later
 foreach(TECH zeromq_p2p kafka)

@@ -3,6 +3,8 @@
 
 #include <iostream>
 #include <string>
+#include <spdlog/spdlog.h>
+#include <spdlog/async.h>
 
 class Logger {
 public:
@@ -39,7 +41,11 @@ public:
     static LogLevel string_to_level(const std::string& level);
 
 private:
-    LogLevel log_level; // Current log level
+    LogLevel current_log_level; // Current log level
+    std::shared_ptr<spdlog::async_logger> async_logger;
+
+    // Helper to map internal LogLevel to spdlog::level
+    spdlog::level::level_enum to_spdlog_level(LogLevel level);
     
 };
 
