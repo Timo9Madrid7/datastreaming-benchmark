@@ -4,6 +4,39 @@
 
 #include <iostream>
 
+// Implementation of CustomLevelFlag
+// This custom flag formatter maps our custom log levels to string representations
+void CustomLevelFlag::format(const spdlog::details::log_msg& msg, const std::tm&, spdlog::memory_buf_t& dest) {
+    std::string level_name;
+    switch (msg.level) {
+        case spdlog::level::critical:
+            level_name = "STUDY"; 
+            break;
+        case spdlog::level::warn:
+            level_name = "CONFIG";
+            break;
+        case spdlog::level::debug:
+            level_name = "DEBUG";
+            break;
+        case spdlog::level::info:
+            level_name = "INFO";
+            break;
+        case spdlog::level::err:
+            level_name = "ERROR";
+            break;
+        default:
+            level_name = spdlog::level::to_string_view(msg.level).data();
+            break;
+    }
+    dest.append(level_name.data(), level_name.data() + level_name.size());
+}
+
+// Clone method for CustomLevelFlag
+// This is required by spdlog to duplicate the formatter
+std::unique_ptr<spdlog::custom_flag_formatter> CustomLevelFlag::clone() const {
+    return spdlog::details::make_unique<CustomLevelFlag>();
+}
+
 // Constructor
 Logger::Logger(Logger::LogLevel log_level) : current_log_level(log_level) {
     try {
@@ -22,8 +55,13 @@ Logger::Logger(Logger::LogLevel log_level) : current_log_level(log_level) {
         // Register the logger globally (optional, but good for finding it later if needed)
         spdlog::register_logger(async_logger);
 
-        // Set the pattern: [Time] [Level] Message
-        async_logger->set_pattern("[%H:%M:%S.%e] [%^%l%$] %v");
+        // Create and set pattern formatter with custom level flag
+        auto formatter = std::make_unique<spdlog::pattern_formatter>();
+        // Custom level flag
+        formatter->add_flag<CustomLevelFlag>('u');
+        // Set the pattern: [Level Time,Message
+        formatter->set_pattern("[%^%u%$] %Y-%m-%d %H:%M:%S.%f,%v");
+        async_logger->set_formatter(std::move(formatter));
 
         // Set the initial level
         set_level(log_level);
@@ -85,9 +123,9 @@ spdlog::level::level_enum Logger::to_spdlog_level(LogLevel level) {
             return spdlog::level::info;
         // Mapping custom levels to standard spdlog levels
         case LogLevel::STUDY:
-            return spdlog::level::warn;
+            return spdlog::level::critical; // Using critical for STUDY
         case LogLevel::CONFIG:
-            return spdlog::level::info;
+            return spdlog::level::warn;     // Using warn for CONFIG
         case LogLevel::ERROR:
             return spdlog::level::err;
         default:
@@ -110,15 +148,12 @@ void Logger::log_info(const std::string& message) {
 
 // Log study messages
 void Logger::log_study(const std::string& message) {
-    // Mapping STUDY to warn or info depending on preference,
-    // or just logging as info with a prefix if spdlog doesn't support custom levels easily.
-    // Here we map it to WARN for visibility.
-    if (async_logger) async_logger->warn("[STUDY]" + message);
+    if (async_logger) async_logger->critical(message);
 }
 
 // Log config messages
 void Logger::log_config(const std::string& message) {
-    if (async_logger) async_logger->info("[CONFIG]" + message);
+    if (async_logger) async_logger->warn(message);
 }
 
 // Log error messages

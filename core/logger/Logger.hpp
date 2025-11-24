@@ -5,6 +5,7 @@
 #include <string>
 #include <spdlog/spdlog.h>
 #include <spdlog/async.h>
+#include <spdlog/pattern_formatter.h>
 
 class Logger {
 public:
@@ -47,6 +48,12 @@ private:
     // Helper to map internal LogLevel to spdlog::level
     spdlog::level::level_enum to_spdlog_level(LogLevel level);
     
+};
+
+class CustomLevelFlag: public spdlog::custom_flag_formatter {
+    public:
+        void format(const spdlog::details::log_msg& msg, const std::tm&, spdlog::memory_buf_t& dest) override;
+        std::unique_ptr<spdlog::custom_flag_formatter> clone() const override;
 };
 
 #endif // LOGGER_H
