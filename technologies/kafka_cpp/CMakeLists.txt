@@ -14,16 +14,13 @@ find_library(RDKAFKA_CPP_LIBRARY rdkafka++ REQUIRED)
 find_path(LZ4_INCLUDE_DIR lz4.h)
 find_library(LZ4_LIBRARY lz4 REQUIRED)
 
-target_include_directories(kafka_cpp_technology PUBLIC
+target_include_directories(kafka_cpp_technology PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${RDKAFKA_INCLUDE_DIR}
     ${LZ4_INCLUDE_DIR}
 )
 
 target_link_libraries(kafka_cpp_technology PRIVATE
-    core-utils
-    core-logger
-    core-interfaces
     factories
     ${RDKAFKA_CPP_LIBRARY}
     ${LZ4_LIBRARY}

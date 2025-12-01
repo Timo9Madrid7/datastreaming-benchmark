@@ -25,7 +25,7 @@ target_sources(core-loader PRIVATE
 target_include_directories(core-loader PUBLIC 
     ${CMAKE_CURRENT_SOURCE_DIR}/technology_loader # make the loader reachable for the apps
 )
-target_link_libraries(core-loader PUBLIC 
+target_link_libraries(core-loader PRIVATE 
     core-logger
 )
 # if (WIN32)
@@ -68,6 +68,9 @@ target_sources(factories PUBLIC
 target_include_directories(factories PUBLIC 
     ${CMAKE_CURRENT_SOURCE_DIR}/factory # Make the factories reachable for the apps and the tech-registrations
 )
-target_link_libraries(factories PUBLIC core-interfaces)
+target_link_libraries(factories PUBLIC 
+    core-interfaces 
+    core-utils
+)
 # set_target_properties(factories PROPERTIES EXPORT_NAME Factories POSITION_INDEPENDENT_CODE ON)
 

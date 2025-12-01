@@ -23,14 +23,13 @@ find_library(RDKAFKA_LIBRARY NAMES rdkafka REQUIRED)
 find_library(LZ4_LIBRARY NAMES lz4 REQUIRED)
 
 # Add include dirs
-target_include_directories(kafka_technology PUBLIC
+target_include_directories(kafka_technology PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${KAFKA_INCLUDE_DIR}
 )
 
 # Link the shared libraries
 target_link_libraries(kafka_technology PRIVATE
-    core-interfaces
     factories
     ${RDKAFKA_LIBRARY}
     ${LZ4_LIBRARY}
