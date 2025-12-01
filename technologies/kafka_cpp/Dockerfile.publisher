@@ -1,0 +1,9 @@
+# Kafka C++ Publisher Dockerfile
+FROM kafka_cpp_base
+
+# Set working directory
+WORKDIR /app/build/core/applications
+
+# Run the consumer app
+ENTRYPOINT ["./PublisherApp"]
+CMD [ "INFO", "DEBUG", "STUDY", "ERROR" ]
