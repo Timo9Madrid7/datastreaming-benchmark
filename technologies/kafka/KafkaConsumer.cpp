@@ -1,5 +1,4 @@
 #include "KafkaConsumer.hpp"
-#include "ConsumerFactory.hpp"
 #include <cstdlib>
 #include <cstring>
 #include <sstream>

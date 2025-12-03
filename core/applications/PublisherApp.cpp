@@ -9,7 +9,8 @@
 #include <string>
 #include <thread>
 
-#include "PublisherFactory.hpp"
+#include "Factory.hpp"
+#include "IPublisher.hpp"
 #include "TechnologyLoader.hpp"
 #include "Utils.hpp"
 #include "cstdlib"
@@ -127,13 +128,14 @@ void PublisherApp::create_publisher() {
 	std::string tech_lib_dir =
 	    utils::get_env_var_or_default("TECHNOLOGY_DIR", "/app/lib/lib");
 	tech_lib = tech_lib_dir + technology.value() + "_technology.so";
+	logger->log_debug("[PublisherApp] Using technology lib: " + tech_lib);
 #endif
 
 	TechnologyLoader::load_technology(tech_lib, logger);
 	logger->log_debug("[PublisherApp] Factory state before calling 'create'");
-	PublisherFactory::debug_print_registry(logger);
+	Factory<IPublisher>::debug_print_registry(logger);
 
-	publisher = PublisherFactory::create(technology.value(), logger);
+	publisher = Factory<IPublisher>::create(technology.value(), logger);
 	logger->log_debug("[PublisherApp] Created " + technology.value()
 	                  + " publisher");
 }

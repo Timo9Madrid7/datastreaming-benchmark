@@ -1,5 +1,4 @@
 #include "KafkaPublisher.hpp"
-#include "PublisherFactory.hpp"
 #include <cstdlib>
 #include <cstring>
 

@@ -28,9 +28,16 @@ void KafkaCppConsumer::initialize() {
     
     const std::optional<std::string> consumer_id = utils::get_env_var("CONTAINER_ID");
     const std::optional<std::string> vtopics = utils::get_env_var("TOPICS");
-    if (!consumer_id || !vtopics) {
-        logger->log_error("[Kafka Consumer] CONTAINER_ID or TOPICS environment variable not set.");
-        throw std::runtime_error("[Kafka Consumer] CONTAINER_ID or TOPICS environment variable not set.");
+    std::string err_msg;
+    if (!consumer_id) {
+        err_msg = "[Kafka Consumer] Missing required environment variable CONTAINER_ID.";
+        logger->log_error(err_msg);
+        throw std::runtime_error(err_msg);
+    }
+    if(!vtopics.value().size()){
+        err_msg = "[Kafka Consumer] Missing required environment variable TOPICS.";
+        logger->log_error(err_msg);
+        throw std::runtime_error(err_msg);
     }
     
     std::string errstr;

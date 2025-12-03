@@ -9,7 +9,8 @@
 #include <string>
 #include <thread>
 
-#include "ConsumerFactory.hpp"
+#include "Factory.hpp"
+#include "IConsumer.hpp"
 #include "Payload.h"
 #include "TechnologyLoader.hpp"
 #include "Utils.hpp"
@@ -37,10 +38,11 @@ void ConsumerApp::create_consumer() {
 	std::string tech_lib_dir =
 	    utils::get_env_var_or_default("TECHNOLOGY_DIR", "/app/lib/lib");
 	tech_lib = tech_lib_dir + technology.value() + "_technology.so";
+	logger->log_debug("[ConsumerApp] Using technology lib: " + tech_lib);
 #endif
 
 	TechnologyLoader::load_technology(tech_lib, logger);
-	consumer = ConsumerFactory::create(technology.value(), logger);
+	consumer = Factory<IConsumer>::create(technology.value(), logger);
 	logger->log_debug("[ConsumerApp] Created " + technology.value()
 	                  + " consumer");
 }

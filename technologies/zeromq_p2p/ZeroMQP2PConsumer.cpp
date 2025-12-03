@@ -3,7 +3,6 @@
 #include <thread>
 #include <cstdlib>
 #include <sstream>
-#include "ConsumerFactory.hpp"
 
 Payload ZeroMQP2PConsumer::deserialize(const std::string& raw_message) {
     const char* data = raw_message.data();

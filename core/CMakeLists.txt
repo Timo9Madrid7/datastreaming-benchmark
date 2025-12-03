@@ -61,9 +61,8 @@ target_link_libraries(core-interfaces INTERFACE
 # set_target_properties(core-logger PROPERTIES EXPORT_NAME Core-logger POSITION_INDEPENDENT_CODE ON)
 
 add_library(factories SHARED) # Should be able to be static
-target_sources(factories PUBLIC
-    factory/PublisherFactory.cpp 
-    factory/ConsumerFactory.cpp
+target_sources(factories PUBLIC 
+    factory/Factory.cpp
 )
 target_include_directories(factories PUBLIC 
     ${CMAKE_CURRENT_SOURCE_DIR}/factory # Make the factories reachable for the apps and the tech-registrations
