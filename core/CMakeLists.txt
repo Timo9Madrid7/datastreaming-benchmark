@@ -1,6 +1,6 @@
 add_library(core-utils STATIC) # archive of object files for use when linking other targets
 target_sources(core-utils PRIVATE # add more source files as needed
-    utils/Env.cpp
+    utils/Utils.cpp
 )
 target_include_directories(core-utils PUBLIC # make the utils reachable for other targets
     ${CMAKE_CURRENT_SOURCE_DIR}/utils 

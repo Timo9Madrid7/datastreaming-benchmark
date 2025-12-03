@@ -15,6 +15,7 @@ AllowShortFunctionsOnASingleLine: None
 
 AlignConsecutiveAssignments: false
 AlignConsecutiveDeclarations: false
+AlignOperands: DontAlign
 
 UseTab: ForIndentation
 IndentWidth: 4
