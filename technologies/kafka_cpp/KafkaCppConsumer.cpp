@@ -1,7 +1,7 @@
 #include "KafkaCppConsumer.hpp"
 #include "Utils.hpp"
 #include "Logger.hpp"
-#include "Payload.h"
+#include "Payload.hpp"
 #include <librdkafka/rdkafkacpp.h>
 #include <memory>
 #include <optional>

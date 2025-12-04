@@ -1,6 +1,7 @@
 #include "KafkaPublisher.hpp"
 #include <cstdlib>
 #include <cstring>
+#include <iostream>
 
 static void kafka_log_callback(const rd_kafka_t* rk, int level,
     const char* fac, const char* buf) {

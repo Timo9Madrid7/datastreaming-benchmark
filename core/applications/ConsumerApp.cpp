@@ -11,7 +11,7 @@
 
 #include "Factory.hpp"
 #include "IConsumer.hpp"
-#include "Payload.h"
+#include "Payload.hpp"
 #include "TechnologyLoader.hpp"
 #include "Utils.hpp"
 

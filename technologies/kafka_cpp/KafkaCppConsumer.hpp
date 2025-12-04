@@ -1,7 +1,7 @@
 #pragma once
 
 #include "IConsumer.hpp"
-#include "Payload.h"
+#include "Payload.hpp"
 
 #include <librdkafka/rdkafkacpp.h>
 #include <memory>

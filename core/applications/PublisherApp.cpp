@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <exception>
+#include <iostream>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -14,6 +15,7 @@
 #include "TechnologyLoader.hpp"
 #include "Utils.hpp"
 #include "cstdlib"
+
 
 Payload PublisherApp::generate_message(int i) {
 	Payload message = pick_random_payload();

@@ -7,7 +7,7 @@
 
 #include "IPublisher.hpp"
 #include "Logger.hpp"
-#include "Payload.h"
+#include "Payload.hpp"
 
 class PublisherApp {
   protected:
