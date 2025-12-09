@@ -1,6 +1,7 @@
 import json
 import itertools
 from typing import Dict, Union, Optional, Iterable
+from .utils.logger import logger
 
 EXCLUSIVE_MSG = "numberOfMessages"
 EXCLUSIVE_TIME = "testDurationS"
@@ -36,7 +37,7 @@ class ScenarioConfigManager:
             EXCLUSIVE_TIME,
             EXCLUSIVE_MSG
         ]
-        print(f"[SCM] Scenario config file: {config_file}")
+        logger.info(f"[SCM] Scenario config file: {config_file}")
         with open(config_file, 'r', encoding='utf-8') as file:
             self.config = json.load(file)
         

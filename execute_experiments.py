@@ -1,5 +1,6 @@
 import sys
 from core.orchestrator.benchmark_manager import BenchmarkManager
+from core.orchestrator.utils.logger import logger
 
 
 if __name__ == "__main__":
@@ -13,8 +14,8 @@ if __name__ == "__main__":
         duration_messages = sys.argv[2]
     i = 0
     while i < len(sys.argv):
-        print(f"[EE] Argument {i}: {sys.argv[i]}")
+        logger.debug(f"[EE] Argument {i}: {sys.argv[i]}")
         i += 1
-    print(f"[EE] Executing benchmark in mode {mode}")
+    logger.info(f"[EE] Executing benchmark in mode {mode}")
     benchmark_manager.run(mode=mode,  duration_messages=duration_messages)
     
