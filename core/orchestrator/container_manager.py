@@ -14,7 +14,7 @@ class ContainerManager:
             self.network_name = network_name
         self.topics_map = {}
         
-    def reset_between_experiments(self):
+    def reset_between_experiments(self) -> None:
         self.topics_map = {}
         self.containers = []
         

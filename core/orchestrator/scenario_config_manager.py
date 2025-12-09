@@ -1,8 +1,14 @@
 import json
 import itertools
+from typing import Dict, Union, Optional, Iterable
 
 EXCLUSIVE_MSG = "numberOfMessages"
 EXCLUSIVE_TIME = "testDurationS"
+
+class ScenarioConfig:
+    COMMON = "common"
+    NETWORK = "network"
+    EXCLUSIVE = "exclusive"
 
 class ScenarioConfigManager:
     
@@ -35,33 +41,32 @@ class ScenarioConfigManager:
             self.config = json.load(file)
         
     @staticmethod
-    def iter_over_range(lower, upper, step, step_operator, midpoint=None, step2=None, step_operator2=None):
-        current = lower - step if step_operator== '+' else lower / step # hack to yield `lower` as the first value
+    def iter_over_range(lower: Union[int, float], upper: Union[int, float], step: Union[int, float], step_operator: str, midpoint: Union[int, float, None] = None, step2: Union[int, float, None] = None, step_operator2: Optional[str] = None) -> Iterable[Union[int, float]]:
+        current = lower - step if step_operator == '+' else lower / step # hack to yield `lower` as the first value
         while current <= upper:
             if midpoint and step2 and current >= midpoint:
                 current = current + step2 if step_operator2 == '+' else current * step2
             else:
                 current = current + step if step_operator == '+' else current * step
             if current > upper:
-                break
+                return
             yield current
     
-    def iter_valid_combinations(self, exclusive_part):
-        generators = {}
+    def iter_valid_combinations(self, exclusive_part: str) -> Iterable[Dict[str, Union[int, float, str]]]:
+        generators: Dict[str, Iterable[Union[int, float, str]]] = {}
         for common_part in self.common_parts:
-            generators[common_part] = self.iter_over_range(**self.config["common"][common_part])
+            generators[common_part] = self.iter_over_range(**self.config[ScenarioConfig.COMMON][common_part])
         for network_part in self.network_parts:
-            generators[network_part] = self.iter_over_range(**self.config["network"][network_part])
+            generators[network_part] = self.iter_over_range(**self.config[ScenarioConfig.NETWORK][network_part])
         for strat in self.assignment_strats:
             generators[strat] = iter(self.config[strat])
-        generators[exclusive_part] = self.iter_over_range(**self.config["exclusive"][exclusive_part])
+        generators[exclusive_part] = self.iter_over_range(**self.config[ScenarioConfig.EXCLUSIVE][exclusive_part])
         for scenario_config in itertools.product(*generators.values()):
             scenario = dict(zip(generators.keys(), scenario_config))
             yield scenario
     
     @staticmethod
-    def generate_scenario_name(scenario):
-        # TODO replace str(scenario.get...) with self.get_...
+    def generate_scenario_name(scenario: Dict[str, Union[int, float, str]]) -> str:
         name_parts = []
 
         # Common messaging identifiers
@@ -81,7 +86,7 @@ class ScenarioConfigManager:
         elif EXCLUSIVE_MSG in scenario:
             name_parts.append(f"{int(scenario[EXCLUSIVE_MSG])}m")
 
-        # todo: not used anymore since we want to test how fast things can go without any meddling
+        # NOTE: not used anymore since we want to test how fast things can go without any meddling
         # # Network-related identifiers
         # bw = ScenarioConfigManager.get_bandwidthMbps(scenario)
         # lat = ScenarioConfigManager.get_latencyMs(scenario)
@@ -92,68 +97,68 @@ class ScenarioConfigManager:
         return "-".join(name_parts).replace('.','_')
     
     @staticmethod
-    def get_producerAssignmentStrategy(scenario):
+    def get_producerAssignmentStrategy(scenario: Dict[str, Union[int, float, str]]) -> str:
         return scenario['producerAssignmentStrategy']
     
     @staticmethod
-    def get_consumerAssignmentStrategy(scenario):
+    def get_consumerAssignmentStrategy(scenario: Dict[str, Union[int, float, str]]) -> str:
         return scenario['consumerAssignmentStrategy']
     
     @staticmethod
-    def get_numProducersPerTopic(scenario):
+    def get_numProducersPerTopic(scenario: Union[int, float, str]) -> int:
         return scenario['numProducersPerTopic']
  
     @staticmethod
-    def get_numConsumers(scenario):
+    def get_numConsumers(scenario: Union[int, float, str]) -> int:
         return scenario['numConsumers']
  
     @staticmethod
-    def get_numTopics(scenario):
+    def get_numTopics(scenario: Union[int, float, str]) -> int:
         return scenario['numTopics']
  
     @staticmethod
-    def get_parallelSubscriptionsPerTopic(scenario):
+    def get_parallelSubscriptionsPerTopic(scenario: Union[int, float, str]) -> int:
         return scenario['parallelSubscriptionsPerTopic']
 
     @staticmethod
-    def get_messageSizeBytes(scenario):
+    def get_messageSizeBytes(scenario: Union[int, float, str]) -> int:
         return int(scenario['messageSizeBytes'])
 
     @staticmethod
-    def get_producerWaitInMicroSeconds(scenario):
+    def get_producerWaitInMicroSeconds(scenario: Dict[str, Union[int, float, str]]) -> int:
         return scenario['producerWaitInMicroSeconds']
 
     @staticmethod
-    def get_backlogSizeMessages(scenario):
+    def get_backlogSizeMessages(scenario: Dict[str, Union[int, float, str]]) -> int:
         return scenario['backlogSizeMessages']
 
 
     @staticmethod
-    def get_bandwidthMbps(scenario):
+    def get_bandwidthMbps(scenario: Dict[str, Union[int, float, str]]) -> int:
         return scenario['bandwidthMbps']
 
     @staticmethod
-    def get_latencyMs(scenario):
+    def get_latencyMs(scenario: Dict[str, Union[int, float, str]]) -> int:
         return scenario['latencyMs']
 
     @staticmethod
-    def get_packetLossPerc(scenario):
+    def get_packetLossPerc(scenario: Dict[str, Union[int, float, str]]) -> float:
         return scenario['packetLossPerc']
 
     @staticmethod
-    def get_jitterMs(scenario):
+    def get_jitterMs(scenario: Dict[str, Union[int, float, str]]) -> int:
         return scenario['jitterMs']
 
 
     @staticmethod
-    def get_numberOfMessages(scenario):
+    def get_numberOfMessages(scenario: Union[int, float, str]) -> Optional[int]:
         if 'numberOfMessages' in scenario:
             return scenario['numberOfMessages']
         else:
             return None
 
     @staticmethod
-    def get_testDurationS(scenario):
+    def get_testDurationS(scenario: Dict[str, Union[int, float, str]]) -> Optional[float]:
         if 'testDurationS' in scenario:
             return scenario['testDurationS']
         else:

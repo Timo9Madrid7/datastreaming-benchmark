@@ -2,6 +2,7 @@ import docker
 import datetime
 import polars as pl
 import os
+from .utils.logger import logger
 
 class ContainerEventsLogger:
     def __init__(self, tech_name, scenario_name, scenario_config, separator = ';', log_level = "STUDY"):
@@ -25,7 +26,7 @@ class ContainerEventsLogger:
     def collect_logs(self):
         self.logs = [] # ensure idempotency
         containers = self.client.containers.list(all=True, filters={"name": f"{self.tech_name}-*"})
-        print(f"[EL] Collecting logs from {len(containers)} containers...")
+        logger.debug(f'[EL] Collecting logs from {len(containers)} containers for technology {self.tech_name} and scenario {self.scenario_name}...')
         for container in containers:
             try:
                 logs = container.logs().decode("utf-8").strip().split("\n")
@@ -35,18 +36,18 @@ class ContainerEventsLogger:
                     if parsed:
                         self.logs.append(parsed)
             except Exception as e:
-                print(f"[EL] Error collecting logs from container {container.id}: {e}")
+                logger.error(f'[EL] Error collecting logs from container {container.id}: {e}')
         
     def write_logs(self):
         if not self.logs:
-            print(f"[EL] No logs to save.")
+            logger.warning(f'[EL] No logs to save for technology {self.tech_name} and scenario {self.scenario_name}.')
             return
         df = pl.DataFrame(self.logs)
         df.write_parquet(self.log_file)
         # with open(self.log_file, mode='w', encoding='utf-8') as file:
         #     file.write(self.separator.join(self.fieldnames) + "\n")
         #     file.writelines(self.logs)
-        print(f"[EL] Logs saved to {self.log_file}")
+        logger.info(f'[EL] Logs saved to {self.log_file}')
 
     def _parse_log(self, log_line, container_name):
         if not self.log_level in log_line:
@@ -71,5 +72,5 @@ class ContainerEventsLogger:
             }
 
         except Exception as e:
-            print(f"[EL] Failed to parse log line: {log_line} — {e}")
+            logger.error(f'[EL] Failed to parse log line: {log_line} — {e}')
             return None
