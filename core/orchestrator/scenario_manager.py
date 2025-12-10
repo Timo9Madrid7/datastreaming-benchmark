@@ -2,18 +2,20 @@ import json
 import random
 from .scenario_config_manager import ScenarioConfigManager
 from .utils.logger import logger
+from typing import List, Optional, Dict, Any
 
 
 class ScenarioManager:
     
-    def __init__(self, scenario_config = None):
+    def __init__(self, scenario_config = None) -> None:
         self.scenario = scenario_config
         self.valid = False
         if self.validate_config():
             self.load_config()
             self.valid = True
 
-    def load_config(self):
+    def load_config(self) -> None:
+        """Loads scenario configuration parameters from the provided scenario config."""
         # todo: these functions don't handle errors gracefully
         # todo: host them here instead of in the config manager? 
         self.producer_strat = ScenarioConfigManager.get_producerAssignmentStrategy(self.scenario)
@@ -32,13 +34,22 @@ class ScenarioManager:
         self.number_of_messages = ScenarioConfigManager.get_numberOfMessages(self.scenario)
         self.duration = ScenarioConfigManager.get_testDurationS(self.scenario)
 
-    def validate_config(self):
+    def validate_config(self) -> bool:
+        """
+        Validates the scenario configuration.
+
+        Returns:
+            bool: True if the configuration is valid.
+            
+        Raises:
+            ValueError: If no scenario configuration is provided.
+        """
         if self.scenario is None:
             raise ValueError(f"No config provided ({self.scenario}) nor loaded.")
         return True
 
     @staticmethod
-    def build_publisher_config(pub_id, topics, pub_rate, n_messages=None, duration=None):
+    def build_publisher_config(pub_id: int, topics: List[str], pub_rate: float, n_messages: Optional[int] = None, duration: Optional[int] = None) -> Dict[str, Any]:
         return {
                 "id": pub_id,
                 "topics": topics,
@@ -48,15 +59,21 @@ class ScenarioManager:
             }
     
     @staticmethod
-    def build_consumer_config(con_id, topics, backlog_size=None):
+    def build_consumer_config(con_id: int, topics: List[str], backlog_size: Optional[int] = None) -> Dict[str, Any]:
         return {
                 "id": con_id,
                 "topics": topics,
                 "backlog_size": backlog_size
             }
         
-    def publisher_configs(self):
-        pub_configs = {}
+    def publisher_configs(self) -> Dict[int, Dict[str, Any]]:
+        """
+        Builds publisher configurations based on the scenario settings.
+
+        Returns:
+            Dict[int, Dict[str, Any]]: A dictionary mapping publisher IDs to their configurations.
+        """
+        pub_configs: Dict[int, Dict[str, Any]] = {}
         for i in range(self.num_producers_per_topic):
             pub_id = i
             logger.debug(f"building config for producer {pub_id} of {self.num_producers_per_topic}")
@@ -82,8 +99,14 @@ class ScenarioManager:
         logger.debug(f"pub_configs: {pub_configs}")
         return pub_configs
     
-    def consumer_configs(self):
-        con_configs = {}
+    def consumer_configs(self) -> Dict[int, Dict[str, Any]]:
+        """
+        Builds consumer configurations based on the scenario settings.
+
+        Returns:
+            Dict[int, Dict[str, Any]]: A dictionary mapping consumer IDs to their configurations.
+        """
+        con_configs: Dict[int, Dict[str, Any]] = {}
         for i in range(self.num_consumers):
             con_id = i
             logger.info(f"building config for consumer {con_id} of {self.num_consumers}")

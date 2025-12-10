@@ -3,6 +3,7 @@ import uuid
 import time
 from confluent_kafka.admin import AdminClient, NewTopic
 import concurrent.futures
+from typing_extensions import override
 
 from ..technology_manager import TechnologyManager, register_technology
 from ..utils.logger import logger
@@ -15,7 +16,7 @@ CONTROLLER_PORT = 9093
 @register_technology("kafka")
 class KafkaManager(TechnologyManager):
     
-    def __init__(self, tech_path, network_name = "benchmark_network", broker_host = KAFKA_CONTAINER_NAME, broker_port = KAFKA_PORT, controller_port = CONTROLLER_PORT, kafka_image = KAFKA_IMAGE):
+    def __init__(self, tech_path, network_name = "benchmark_network", broker_host = KAFKA_CONTAINER_NAME, broker_port = KAFKA_PORT, controller_port = CONTROLLER_PORT, kafka_image = KAFKA_IMAGE) -> None:
         TechnologyManager.__init__(self, tech_path, network_name)
         self.client = docker.from_env()
         self.container = None
@@ -23,8 +24,9 @@ class KafkaManager(TechnologyManager):
         self.broker_port = broker_port
         self.controller_port = controller_port
         self.kafka_image = kafka_image
-        
-    def setup_tech(self):
+    
+    @override
+    def setup_tech(self) -> None:
         # existing = None
         # try:
         #     existing = self.client.containers.get(self.broker_host)
@@ -36,13 +38,21 @@ class KafkaManager(TechnologyManager):
         # else:
         self.start_broker()
     
-    def reset_tech(self):
+    @override
+    def reset_tech(self) -> None:
         self.reset_broker_state()
     
-    def teardown_tech(self):
+    @override
+    def teardown_tech(self) -> None: 
         self.stop_broker()
 
-    def start_broker(self):
+    def start_broker(self) -> str:
+        """
+        Starts a Kafka broker container.
+
+        Returns:
+            str: The bootstrap server address of the started Kafka broker.
+        """
         logger.info("Starting new Kafka broker...")
         cluster_id = uuid.uuid4().hex
         env_vars = {
@@ -76,7 +86,7 @@ class KafkaManager(TechnologyManager):
         logger.info(f"Kafka broker is up and running at localhost:{self.broker_port}")
         return f"localhost:{self.broker_port}"
 
-    def stop_broker(self):
+    def stop_broker(self) -> None:
         try:
             existing = self.client.containers.get(self.broker_host)
             logger.info("Stopping existing Kafka broker container...")
@@ -85,7 +95,16 @@ class KafkaManager(TechnologyManager):
         except docker.errors.NotFound:
             pass  # Nothing to stop
 
-    def _wait_for_readiness(self, timeout=30):
+    def _wait_for_readiness(self, timeout: int = 30) -> None:
+        """
+        Waits for the Kafka broker to become ready.
+
+        Args:
+            timeout (int, optional): Maximum time to wait for readiness in seconds. Defaults to 30.
+
+        Raises:
+            TimeoutError: If the broker does not become ready within the timeout period.
+        """
         logger.info("Waiting for Kafka broker to become ready...")
         start = time.time()
         while time.time() - start < timeout:
@@ -95,7 +114,7 @@ class KafkaManager(TechnologyManager):
             time.sleep(1)
         raise TimeoutError("Kafka broker did not become ready in time.")
 
-    def reset_broker_state(self):
+    def reset_broker_state(self) -> None:
         """Delete all non-internal topics from the broker."""
         logger.info("Resetting Kafka broker state...")
 

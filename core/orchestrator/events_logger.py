@@ -3,9 +3,10 @@ import datetime
 import polars as pl
 import os
 from .utils.logger import logger
+from typing import Optional, Dict
 
 class ContainerEventsLogger:
-    def __init__(self, tech_name, scenario_name, scenario_config, separator = ';', log_level = "STUDY"):
+    def __init__(self, tech_name, scenario_name, scenario_config, separator = ';', log_level = "STUDY") -> None:
         self.tech_name = tech_name
         self.scenario_name = scenario_name
         self.log_file = os.path.join("logs", scenario_config, tech_name, f"{scenario_name}_events.parquet")
@@ -23,7 +24,8 @@ class ContainerEventsLogger:
         self.logs = []
         self.log_level = log_level
 
-    def collect_logs(self):
+    def collect_logs(self) -> None:
+        """Collect logs from all containers related to the technology."""
         self.logs = [] # ensure idempotency
         containers = self.client.containers.list(all=True, filters={"name": f"{self.tech_name}-*"})
         logger.debug(f'Collecting logs from {len(containers)} containers for technology {self.tech_name} and scenario {self.scenario_name}...')
@@ -38,7 +40,8 @@ class ContainerEventsLogger:
             except Exception as e:
                 logger.error(f'Error collecting logs from container {container.id}: {e}')
         
-    def write_logs(self):
+    def write_logs(self) -> None:
+        """Write collected logs to a Parquet file."""
         if not self.logs:
             logger.warning(f'No logs to save for technology {self.tech_name} and scenario {self.scenario_name}.')
             return
@@ -49,7 +52,18 @@ class ContainerEventsLogger:
         #     file.writelines(self.logs)
         logger.info(f'Logs saved to {self.log_file}')
 
-    def _parse_log(self, log_line, container_name):
+    def _parse_log(self, log_line: str, container_name: str) -> Optional[Dict]:
+        """
+        Parse a single log line and extract relevant fields.
+        
+        Args:
+            log_line (str): The log line to parse.
+            container_name (str): The name of the container from which the log was collected.
+            
+        Returns:
+            Optional[Dict]: A dictionary with parsed fields or None if parsing fails.
+        """
+        
         if not self.log_level in log_line:
             return None
         try:

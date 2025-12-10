@@ -32,11 +32,29 @@ class BenchmarkManager:
         self.tm = None
 
     def run(self, mode: Optional[str] = None, duration_messages: Optional[str] = None) -> None:
+        """
+        Run experiments for all scenarios and technologies specified in the configuration.
+
+        Args:
+            mode (Optional[str], optional): _mode to run the benchmark in. Defaults to None.
+            duration_messages (Optional[str], optional): "m" for message-based, "d" for duration-based, "md" for both. Defaults to None.
+        """
         scenario_batch: List[str] = self.config[BenchmarkScenarios.SCENARIO_BATCH]
         for scenario in scenario_batch:
             self.run_config(scenario, mode, duration_messages = duration_messages)
     
     def run_config(self, scenario: str, mode: Optional[str] = None, duration_messages: str = "md") -> None:
+        """
+        Run experiments for a specific scenario configuration.
+
+        Args:
+            scenario (str): The scenario configuration file name.
+            mode (Optional[str], optional): _mode to run the benchmark in. Defaults to None.
+            duration_messages (str, optional): "m" for message-based, "d" for duration-based, "md" for both. Defaults to "md".
+
+        Raises:
+            ValueError: If a technology validation fails.
+        """
         self.scm = ScenarioConfigManager(os.path.join(SCENARIOS_DIR, scenario))
         self.scenario_name = scenario.split(".json")[0]
         logger.info(f'Using scenario_config from {self.scenario_name}')
@@ -58,6 +76,14 @@ class BenchmarkManager:
             self.tm = None
 
     def execute_experiment(self, tech_name: str, scenario_config: Dict[str, Union[int, float]], mode: Optional[str] = None) -> None:
+        """
+        Execute a single experiment for a given technology and scenario configuration.
+
+        Args:
+            tech_name (str): The name of the technology to test.
+            scenario_config (Dict[str, Union[int, float]]): The scenario configuration parameters.
+            mode (Optional[str], optional): _mode to run the benchmark in. Defaults to None.
+        """
         self.cm.reset_between_experiments()
         
         logger.info(f'Setting up technology {tech_name}...')

@@ -13,7 +13,7 @@ class ScenarioConfig:
 
 class ScenarioConfigManager:
     
-    def __init__(self, config_file):
+    def __init__(self, config_file) -> None:
         self.assignment_strats = [
             "producerAssignmentStrategy",
             "consumerAssignmentStrategy"
@@ -43,6 +43,27 @@ class ScenarioConfigManager:
         
     @staticmethod
     def iter_over_range(lower: Union[int, float], upper: Union[int, float], step: Union[int, float], step_operator: str, midpoint: Union[int, float, None] = None, step2: Union[int, float, None] = None, step_operator2: Optional[str] = None) -> Iterable[Union[int, float]]:
+        """
+        Iterates over a range of values with specified step operations.
+        Given a lower and upper bound, this generator yields values starting from 'lower' to 'upper',
+        incrementing or multiplying by 'step' based on 'step_operator'. If a 'midpoint' is provided,
+        the stepping behavior changes to 'step2' and 'step_operator2' once the midpoint is reached. 
+
+        Args:
+            lower (Union[int, float]): _lower bound of the range.
+            upper (Union[int, float]): _upper bound of the range.
+            step (Union[int, float]): _step value for the first segment.
+            step_operator (str): _operator for the first segment ('+' for addition, '/' for division).
+            midpoint (Union[int, float, None], optional): _midpoint to switch stepping behavior. Defaults to None.
+            step2 (Union[int, float, None], optional): _step value for the second segment. Defaults to None.
+            step_operator2 (Optional[str], optional): _operator for the second segment ('+' for addition, '/' for division). Defaults to None.
+
+        Returns:
+            Iterable[Union[int, float]]: _generator yielding values in the specified range.
+
+        Yields:
+            Iterator[Iterable[Union[int, float]]]: _generated values within the defined range.
+        """
         current = lower - step if step_operator == '+' else lower / step # hack to yield `lower` as the first value
         while current <= upper:
             if midpoint and step2 and current >= midpoint:
@@ -54,6 +75,18 @@ class ScenarioConfigManager:
             yield current
     
     def iter_valid_combinations(self, exclusive_part: str) -> Iterable[Dict[str, Union[int, float, str]]]:
+        """
+        Generates all valid combinations of scenario configurations based on the provided exclusive part.
+
+        Args:
+            exclusive_part (str): The exclusive part to consider for generating combinations.
+
+        Returns:
+            Iterable[Dict[str, Union[int, float, str]]]: A generator yielding dictionaries of scenario configurations.
+
+        Yields:
+            Iterator[Iterable[Dict[str, Union[int, float, str]]]]: _generated scenario configurations.
+        """
         generators: Dict[str, Iterable[Union[int, float, str]]] = {}
         for common_part in self.common_parts:
             generators[common_part] = self.iter_over_range(**self.config[ScenarioConfig.COMMON][common_part])
@@ -68,6 +101,15 @@ class ScenarioConfigManager:
     
     @staticmethod
     def generate_scenario_name(scenario: Dict[str, Union[int, float, str]]) -> str:
+        """
+        Generates a scenario name based on the provided scenario configuration.
+
+        Args:
+            scenario (Dict[str, Union[int, float, str]]): The scenario configuration dictionary.
+
+        Returns:
+            str: The generated scenario name.
+        """
         name_parts = []
 
         # Common messaging identifiers

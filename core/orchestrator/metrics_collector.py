@@ -37,8 +37,19 @@ class MetricsCollector:
             self.thread = threading.Thread(target=self._collect_metrics)
             self.thread.start()
             
-    def _calculate_cpu_percent(self, container_id, cpu_usage, system_cpu_usage, num_cpus) -> float:
-        """Calculate CPU usage as a percentage of total system capacity."""
+    def _calculate_cpu_percent(self, container_id: str, cpu_usage: float, system_cpu_usage: float, num_cpus: int) -> float:
+        """
+        Calculate CPU usage as a percentage of total system capacity.
+        
+        Args:
+            container_id (str): The ID of the Docker container.
+            cpu_usage (float): The current CPU usage of the container.
+            system_cpu_usage (float): The current total system CPU usage.
+            num_cpus (int): The number of CPUs available on the host system.
+        
+        Returns:
+            float: The CPU usage percentage.
+        """
         if container_id in self.previous_cpu and container_id in self.previous_system_cpu:
             # Delta calculation
             delta_cpu = cpu_usage - self.previous_cpu[container_id]
@@ -51,6 +62,7 @@ class MetricsCollector:
         return 0.0
 
     def _collect_metrics(self) -> None:
+        """Collect metrics from all containers related to the technology in parallel.This method runs in a separate thread and collects metrics at regular intervals."""
         logger.info(f"Starting metrics collection for technology '{self.tech_name}'...")
         containers: List[Container] = self.client.containers.list(filters={"name": f"{self.tech_name}-*"})
         with concurrent.futures.ThreadPoolExecutor() as executor:
@@ -70,6 +82,15 @@ class MetricsCollector:
             
 
     def collect_metrics_container(self, container: Container) -> str:
+        """
+        Collect metrics for a single container and save them to a CSV file.       
+
+        Args:
+            container (Container): The Docker container instance.
+
+        Returns:
+            str: A summary string indicating the number of logs collected.
+        """
         client_info: Dict[str, Any]  = self.client.info()
         num_cpus: int = client_info.get("NCPU", 1)
         # Open the file once and keep appending to avoid file locks
