@@ -84,14 +84,21 @@ class MetricsCollector:
                     stats: Dict[str, Any] = container.stats(stream=False)
 
                     # Collect metrics
-                    cpu_usage_ns: float = stats.get("cpu_stats", {}).get("cpu_usage", {}).get("total_usage", 0)
-                    system_cpu_usage: float = stats.get("cpu_stats", {}).get("system_cpu_usage", 0)
-                    memory_usage: float = stats.get("memory_stats", {}).get("usage", 0)
-                    network_rx: float = sum(v.get("rx_bytes", 0) for v in stats.get("networks", {}).values())
-                    network_tx: float = sum(v.get("tx_bytes", 0) for v in stats.get("networks", {}).values())
-                    blkio_stats: float = stats.get("blkio_stats", {}).get("io_service_bytes_recursive", [])
-                    disk_read: float = sum(x.get("value", 0) for x in blkio_stats if x.get("op") == "Read")
-                    disk_write: float = sum(x.get("value", 0) for x in blkio_stats if x.get("op") == "Write")
+                    cpu_stats = stats.get("cpu_stats") or {}
+                    cpu_usage_ns: float = cpu_stats.get("cpu_usage", {}).get("total_usage", 0)
+                    system_cpu_usage: float = cpu_stats.get("system_cpu_usage", 0)
+                    
+                    memory_stats = stats.get("memory_stats") or {}
+                    memory_usage: float = memory_stats.get("usage", 0)
+                    
+                    networks: dict = stats.get("networks") or {}
+                    network_rx: float = sum(v.get("rx_bytes", 0) for v in networks.values())
+                    network_tx: float = sum(v.get("tx_bytes", 0) for v in networks.values())
+                    
+                    blkio_stats: dict = stats.get("blkio_stats") or {}
+                    io_service_bytes: list = blkio_stats.get("io_service_bytes_recursive") or []
+                    disk_read: float = sum(x.get("value", 0) for x in io_service_bytes if x.get("op") == "Read")
+                    disk_write: float = sum(x.get("value", 0) for x in io_service_bytes if x.get("op") == "Write")
                     
                     # Calculate CPU percentage
                     cpu_usage_perc = self._calculate_cpu_percent(container.id, cpu_usage_ns, system_cpu_usage, num_cpus)
@@ -110,9 +117,11 @@ class MetricsCollector:
                         "disk_write": disk_write
                     })
                 except TypeError as e:
-                    return f"TypeError after {nlogs}  logs. Probably the container is not running: {e}"
+                    logger.warning(f"TypeError while collecting metrics for container {container.name}: {e}")
+                    continue
                 except Exception as e:
-                    return (f"Error while collecting metrics: {e}")
+                    logger.warning(f"Error while collecting metrics for container {container.name}: {e}")
+                    continue
                 
                 logger.debug(f"[MC] Metrics for {container.name}: CPU {cpu_usage_perc}%, Memory {memory_usage} bytes, Network RX {network_rx} bytes, Network TX {network_tx} bytes, Disk Read {disk_read} bytes, Disk Write {disk_write} bytes")
                 time.sleep(self.interval)

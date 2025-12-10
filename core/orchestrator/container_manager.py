@@ -1,4 +1,5 @@
 import docker
+from docker.models.containers import Container
 from functools import wraps
 from .utils.logger import logger
 
@@ -79,7 +80,7 @@ class ContainerManager:
             }
             logger.debug(f"[CM] Environment: {environment}")
             logger.debug(f"[CM] Starting container from image {tech_name}_publisher in mode {mode}")
-            container = self.client.containers.run(
+            container: Container = self.client.containers.run(
                 name=container_name,
                 image=f"{tech_name}_publisher",
                 environment=environment,
