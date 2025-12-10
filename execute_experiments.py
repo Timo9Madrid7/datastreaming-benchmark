@@ -14,8 +14,8 @@ if __name__ == "__main__":
         duration_messages = sys.argv[2]
     i = 0
     while i < len(sys.argv):
-        logger.debug(f"[EE] Argument {i}: {sys.argv[i]}")
+        logger.debug(f"Argument {i}: {sys.argv[i]}")
         i += 1
-    logger.info(f"[EE] Executing benchmark in mode {mode}")
+    logger.info(f"Executing benchmark in mode {mode}")
     benchmark_manager.run(mode=mode,  duration_messages=duration_messages)
     

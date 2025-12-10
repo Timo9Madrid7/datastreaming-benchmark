@@ -50,7 +50,7 @@ class TechnologyManager (ABC):
         config_file = os.path.join("logs", scenario_config, self.tech_name, f"{scenario_name}_{container.name}_runtimeconfig.json")
         with open(config_file, 'w', encoding='utf-8') as f:
             json.dump(config, f, indent=4)
-        logger.info(f"[TM] Saved {container.name} config to {config_file}")
+        logger.info(f"Saved {container.name} config to {config_file}")
             
     def validate_technology(self) -> bool:
         for dockerfile in [self.base_dockerfile(), self.publisher_dockerfile(), self.consumer_dockerfile()]:

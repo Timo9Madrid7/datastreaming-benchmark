@@ -54,7 +54,7 @@ class ContainerManager:
         def wrapper(self, container_id, *args, **kwargs):
             container = next((c for c in self.containers if c.id == container_id), None)
             if container is None:
-                raise ValueError(f"[CM] Container ID '{container_id}' not found")
+                raise ValueError(f"Container ID '{container_id}' not found")
             return method(self, container, *args, **kwargs)
         return wrapper
         
@@ -62,7 +62,7 @@ class ContainerManager:
     def start_publisher(self, tech_name, pub_id, topics, pub_rate, message_size, n_messages=None, duration=None, paused = True, mode = None):
         if (n_messages is None and duration is None) or (n_messages is not None and duration is not None):
             raise ValueError("One and only one of 'n_messages' and 'duration' must be passed.")
-        logger.debug(f"[CM] Starting publisher {pub_id} on topics {topics} using {tech_name}")
+        logger.debug(f"Starting publisher {pub_id} on topics {topics} using {tech_name}")
         try:
             container_name = f"{tech_name}-{pub_id}"
             publisher_endpoint = "0.0.0.0" if "p2p" in container_name else "benchmark_" + tech_name + "_broker"
@@ -78,8 +78,8 @@ class ContainerManager:
                 "PAYLOAD_SAMPLES": 5, # can be hardcoded for now?
                 "PAYLOAD_KIND": "FLAT", # TODO read payload kind from config
             }
-            logger.debug(f"[CM] Environment: {environment}")
-            logger.debug(f"[CM] Starting container from image {tech_name}_publisher in mode {mode}")
+            logger.debug(f"Environment: {environment}")
+            logger.debug(f"Starting container from image {tech_name}_publisher in mode {mode}")
             container: Container = self.client.containers.run(
                 name=container_name,
                 image=f"{tech_name}_publisher",
@@ -91,9 +91,9 @@ class ContainerManager:
             if paused:
                 container.pause()
             self.containers.append(container)
-            logger.debug(f"[CM] Created container {container.name}")
+            logger.debug(f"Created container {container.name}")
         except docker.errors.DockerException as e:
-            raise ValueError(f"[CM] Failed to start publisher {pub_id}") from e
+            raise ValueError(f"Failed to start publisher {pub_id}") from e
         for topic in topics:
             if not topic in self.topics_map:
                 self.topics_map[topic] = []
@@ -102,7 +102,7 @@ class ContainerManager:
     
     # @return_container_ids
     def start_consumer(self, tech_name, con_id, topics, backlog_size = None, paused = True, mode = None):
-        logger.debug(f"[CM] Starting consumer {con_id} subscribed to topics {topics} with backlog_size {backlog_size} using {tech_name}")
+        logger.debug(f"Starting consumer {con_id} subscribed to topics {topics} with backlog_size {backlog_size} using {tech_name}")
         try:
             topics_list, publishers_list = self.topics_and_publishers_lists(topics)
             environment = {
@@ -112,10 +112,10 @@ class ContainerManager:
                 "BACKLOG_SIZE": backlog_size
             }
             if "p2p" in tech_name:
-                logger.debug(f"[CM] Using p2p broker {publishers_list}")
+                logger.debug(f"Using p2p broker {publishers_list}")
                 environment["CONSUMER_ENDPOINT"] = ','.join(publishers_list)
             else:
-                logger.debug(f"[CM] Using tech-specific broker benchmark_" + tech_name + "_broker")
+                logger.debug(f"Using tech-specific broker benchmark_" + tech_name + "_broker")
                 environment["CONSUMER_ENDPOINT"] = "benchmark_" + tech_name + "_broker"
                 
             container = self.client.containers.run(
@@ -129,36 +129,36 @@ class ContainerManager:
             if paused:
                 container.pause()
             self.containers.append(container)
-            logger.debug(f"[CM] Created container {container.name}")
+            logger.debug(f"Created container {container.name}")
         except docker.errors.DockerException as e:
-            raise ValueError(f"[CM] Failed to start consumer {con_id}") from e
+            raise ValueError(f"Failed to start consumer {con_id}") from e
         return container.name
 
     def wake_all(self):
-        logger.debug("[CM] Waking all containers...")
+        logger.debug("Waking all containers...")
         for container in self.containers:
             container.unpause()
             
     @validate_container
     def wake_container(self, container_id):
-        logger.debug(f"[CM] Waking container {container_id}...")
+        logger.debug(f"Waking container {container_id}...")
         container = self.client.containers.get(container_id)
         container.unpause()
 
     def stop_all(self):
-        logger.debug("[CM] Stopping all containers...")
+        logger.debug("Stopping all containers...")
         for container in self.containers:
             container.stop()
             
     @validate_container
     def stop_container(self, container_id):
-        logger.debug(f"[CM] Stopping container {container_id}...")
+        logger.debug(f"Stopping container {container_id}...")
         container = self.client.containers.get(container_id)
         container.stop()
         
     @return_container_ids
     def remove_all(self):
-        logger.debug("[CM] Removing all containers...")
+        logger.debug("Removing all containers...")
         for container in self.containers:
             container.remove()
         self.containers = []
@@ -166,19 +166,19 @@ class ContainerManager:
     @validate_container
     @return_container_ids
     def remove_container(self, container_id):
-        logger.debug(f"[CM] Removing container {container_id}...")
+        logger.debug(f"Removing container {container_id}...")
         container = self.client.containers.get(container_id)
         container.remove()
         self.containers = [c for c in self.containers if c.id != container_id]
         
     def wait_for_all(self):
-        logger.debug("[CM] Waiting for all containers to finish...")
+        logger.debug("Waiting for all containers to finish...")
         for container in self.containers:
             container.wait()
     
     @validate_container
     def wait_for_container(self, container_id):
-        logger.debug(f"[CM] Waiting for container {container_id} to finish...")
+        logger.debug(f"Waiting for container {container_id} to finish...")
         container = self.client.containers.get(container_id)
         container.wait()
     

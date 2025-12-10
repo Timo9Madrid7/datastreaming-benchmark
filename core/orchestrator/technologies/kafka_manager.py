@@ -56,7 +56,7 @@ class KafkaManager(TechnologyManager):
             "ALLOW_PLAINTEXT_LISTENER": "yes"
         }
 
-        logger.debug(f"[KM] Starting Kafka broker container: {env_vars}")
+        logger.debug(f"Starting Kafka broker container: {env_vars}")
 
         self.container = self.client.containers.run(
             image=self.kafka_image,
@@ -73,20 +73,20 @@ class KafkaManager(TechnologyManager):
 
         self._wait_for_readiness()
 
-        logger.info(f"[KM] Kafka broker is up and running at localhost:{self.broker_port}")
+        logger.info(f"Kafka broker is up and running at localhost:{self.broker_port}")
         return f"localhost:{self.broker_port}"
 
     def stop_broker(self):
         try:
             existing = self.client.containers.get(self.broker_host)
-            logger.info("[KM] Stopping existing Kafka broker container...")
+            logger.info("Stopping existing Kafka broker container...")
             # existing.stop()
             existing.remove(force=True)
         except docker.errors.NotFound:
             pass  # Nothing to stop
 
     def _wait_for_readiness(self, timeout=30):
-        logger.info("[KM] Waiting for Kafka broker to become ready...")
+        logger.info("Waiting for Kafka broker to become ready...")
         start = time.time()
         while time.time() - start < timeout:
             logs = self.container.logs().decode("utf-8")
@@ -97,7 +97,7 @@ class KafkaManager(TechnologyManager):
 
     def reset_broker_state(self):
         """Delete all non-internal topics from the broker."""
-        logger.info("[KM] Resetting Kafka broker state...")
+        logger.info("Resetting Kafka broker state...")
 
         admin_conf = {'bootstrap.servers': "localhost:9092"}
         admin_client = AdminClient(admin_conf)
@@ -110,16 +110,16 @@ class KafkaManager(TechnologyManager):
         ]
 
         if not topics_to_delete:
-            logger.info("[KM] No topics to delete.")
+            logger.info("No topics to delete.")
             return
 
-        logger.debug(f"[KM] Deleting topics: {topics_to_delete}")
+        logger.debug(f"Deleting topics: {topics_to_delete}")
         delete_futures = admin_client.delete_topics(topics_to_delete, operation_timeout=30)
 
         # Wait for each deletion to complete
         for topic, future in delete_futures.items():
             try:
                 future.result()
-                logger.debug(f"[KM] Deleted topic: {topic}")
+                logger.debug(f"Deleted topic: {topic}")
             except Exception as e:
-                logger.error(f"[KM] Failed to delete topic {topic}: {e}")
+                logger.error(f"Failed to delete topic {topic}: {e}")

@@ -59,7 +59,7 @@ class ScenarioManager:
         pub_configs = {}
         for i in range(self.num_producers_per_topic):
             pub_id = i
-            logger.debug(f"[SM] building config for producer {pub_id} of {self.num_producers_per_topic}")
+            logger.debug(f"building config for producer {pub_id} of {self.num_producers_per_topic}")
             topics = []
             # TODO assignment strategies
             # if self.producer_strat == "round-robin":
@@ -68,7 +68,7 @@ class ScenarioManager:
             #     topics.append(f"{random.choice(range(self.num_topics))}")
             for i in range(self.num_topics):
                 topics.append(i)
-            logger.info(f"[SM] TOPICS = {topics} -> {','.join([str(i) for i in topics])}")
+            logger.info(f"TOPICS = {topics} -> {','.join([str(i) for i in topics])}")
             
             pub_configs[pub_id] = {
                 "pub_id": f"P{pub_id}", 
@@ -78,15 +78,15 @@ class ScenarioManager:
                 "n_messages": self.number_of_messages,
                 "duration": self.duration,
             }
-            logger.debug(f"[SM]: config for publisher {f'P{pub_id}'}: {pub_configs[pub_id]}")
-        logger.debug(f"[SM]: pub_configs: {pub_configs}")
+            logger.debug(f"config for publisher {f'P{pub_id}'}: {pub_configs[pub_id]}")
+        logger.debug(f"pub_configs: {pub_configs}")
         return pub_configs
     
     def consumer_configs(self):
         con_configs = {}
         for i in range(self.num_consumers):
             con_id = i
-            logger.info(f"[SM] building config for consumer {con_id} of {self.num_consumers}")
+            logger.info(f"building config for consumer {con_id} of {self.num_consumers}")
             topics = []
             if self.consumer_strat == "round-robin":
                 topics.append(f"{i%self.num_topics}")
@@ -97,8 +97,8 @@ class ScenarioManager:
                 "topics": topics,
                 "backlog_size": self.backlog_size
             }
-            logger.debug(f"[SM]: config for consumer {f'C{con_id}'}: {con_configs[con_id]}")
-        logger.debug(f"[SM]: con_configs: {con_configs}")
+            logger.debug(f"config for consumer {f'C{con_id}'}: {con_configs[con_id]}")
+        logger.debug(f"con_configs: {con_configs}")
         return con_configs
 
     # def get_publishers(self):

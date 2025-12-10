@@ -37,7 +37,7 @@ class ScenarioConfigManager:
             EXCLUSIVE_TIME,
             EXCLUSIVE_MSG
         ]
-        logger.info(f"[SCM] Scenario config file: {config_file}")
+        logger.info(f"Scenario config file: {config_file}")
         with open(config_file, 'r', encoding='utf-8') as file:
             self.config = json.load(file)
         

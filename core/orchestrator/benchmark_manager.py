@@ -100,9 +100,9 @@ class BenchmarkManager:
                 #     raise ValueError(f"Consumer {sub_config['id']} failed to start correctly.")
             
             metrics.start()
-            logger.info("[BM] All containers started. Unpausing...")
+            logger.info("All containers started. Unpausing...")
             self.cm.wake_all()
-            logger.info("[BM] Containers unpaused. Collecting metrics...")
+            logger.info("Containers unpaused. Collecting metrics...")
             self.cm.wait_for_all()
             metrics.stop()
             events_logger = ContainerEventsLogger(tech_name, scenario_name, self.scenario_name)
@@ -113,9 +113,9 @@ class BenchmarkManager:
                     self.tm.save_runtime_container_config(container, self.scenario_name, scenario_name)
 
         finally:
-            logger.info("[BM] Stopping and removing all containers...")
+            logger.info("Stopping and removing all containers...")
             self.cm.stop_all()
             self.cm.remove_all()
-            logger.info(f"[BM] All containers stopped and removed for {tech_name}.")
+            logger.info(f"All containers stopped and removed for {tech_name}.")
             self.tm.teardown_tech()
-            logger.info(f"[BM] Teardown completed for {tech_name}.")
+            logger.info(f"Teardown completed for {tech_name}.")

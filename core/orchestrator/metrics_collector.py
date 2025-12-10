@@ -62,7 +62,7 @@ class MetricsCollector:
                 logger.info(f"Metrics collection started for container: {container.name}")
             for future in concurrent.futures.as_completed(futures):
                 try:
-                    logger.info(f"Metrics collection completed for container: {fc[future]}")
+                    logger.info(f"Metrics collection completed for container: {fc[future]}, {future.result()}")
                 except Exception as e:
                     logger.error(f"Error in metrics collection for container {fc[future]}: {e}")        
             logger.info(f"Metrics collection finished for technology '{self.tech_name}'.")
@@ -82,6 +82,11 @@ class MetricsCollector:
                 try:
                     timestamp = datetime.now().isoformat()
                     stats: Dict[str, Any] = container.stats(stream=False)
+                    
+                    if not stats or not stats.get("cpu_stats") or not stats.get("memory_stats"):
+                        logger.warning(f"No stats available for container {container.name}. Skipping this interval.")
+                        time.sleep(self.interval)
+                        continue
 
                     # Collect metrics
                     cpu_stats = stats.get("cpu_stats") or {}
@@ -123,7 +128,7 @@ class MetricsCollector:
                     logger.warning(f"Error while collecting metrics for container {container.name}: {e}")
                     continue
                 
-                logger.debug(f"[MC] Metrics for {container.name}: CPU {cpu_usage_perc}%, Memory {memory_usage} bytes, Network RX {network_rx} bytes, Network TX {network_tx} bytes, Disk Read {disk_read} bytes, Disk Write {disk_write} bytes")
+                logger.debug(f"Metrics for {container.name}: CPU {cpu_usage_perc}%, Memory {memory_usage} bytes, Network RX {network_rx} bytes, Network TX {network_tx} bytes, Disk Read {disk_read} bytes, Disk Write {disk_write} bytes")
                 time.sleep(self.interval)
                 nlogs += 1
         return f"{nlogs} logs collected"
