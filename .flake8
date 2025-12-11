@@ -1,0 +1,22 @@
+[flake8]
+max-line-length = 88
+extend-ignore = E203, E501, W503
+
+exclude =
+    analyses/*
+    diagrams/*
+    logs/*
+    technologies/*
+    test_scenarios/*
+    core/applications/*
+    core/factory/*
+    core/interfaces/*
+    core/logger/*
+    core/payload/*
+    core/technology_loader/*
+    core/tests/*
+    core/utils/*
+    build
+    dist
+    .git
+    __pycache__

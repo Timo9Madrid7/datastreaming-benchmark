@@ -1,8 +1,8 @@
-import docker
-import uuid
 import time
-from confluent_kafka.admin import AdminClient, NewTopic
-import concurrent.futures
+import uuid
+
+import docker
+from confluent_kafka.admin import AdminClient
 from typing_extensions import override
 
 from ..technology_manager import TechnologyManager, register_technology
@@ -13,10 +13,19 @@ KAFKA_CONTAINER_NAME = "benchmark_kafka_broker"
 KAFKA_PORT = 9092
 CONTROLLER_PORT = 9093
 
+
 @register_technology("kafka")
 class KafkaManager(TechnologyManager):
-    
-    def __init__(self, tech_path, network_name = "benchmark_network", broker_host = KAFKA_CONTAINER_NAME, broker_port = KAFKA_PORT, controller_port = CONTROLLER_PORT, kafka_image = KAFKA_IMAGE) -> None:
+
+    def __init__(
+        self,
+        tech_path,
+        network_name="benchmark_network",
+        broker_host=KAFKA_CONTAINER_NAME,
+        broker_port=KAFKA_PORT,
+        controller_port=CONTROLLER_PORT,
+        kafka_image=KAFKA_IMAGE,
+    ) -> None:
         TechnologyManager.__init__(self, tech_path, network_name)
         self.client = docker.from_env()
         self.container = None
@@ -24,7 +33,7 @@ class KafkaManager(TechnologyManager):
         self.broker_port = broker_port
         self.controller_port = controller_port
         self.kafka_image = kafka_image
-    
+
     @override
     def setup_tech(self) -> None:
         # existing = None
@@ -37,13 +46,13 @@ class KafkaManager(TechnologyManager):
         #     self.reset_broker_state()
         # else:
         self.start_broker()
-    
+
     @override
     def reset_tech(self) -> None:
         self.reset_broker_state()
-    
+
     @override
-    def teardown_tech(self) -> None: 
+    def teardown_tech(self) -> None:
         self.stop_broker()
 
     def start_broker(self) -> str:
@@ -63,7 +72,7 @@ class KafkaManager(TechnologyManager):
             "KAFKA_CFG_ADVERTISED_LISTENERS": f"PLAINTEXT://{self.broker_host}:9092",
             "KAFKA_CFG_CONTROLLER_LISTENER_NAMES": "CONTROLLER",
             "KAFKA_KRAFT_CLUSTER_ID": cluster_id,
-            "ALLOW_PLAINTEXT_LISTENER": "yes"
+            "ALLOW_PLAINTEXT_LISTENER": "yes",
         }
 
         logger.debug(f"Starting Kafka broker container: {env_vars}")
@@ -74,11 +83,11 @@ class KafkaManager(TechnologyManager):
             environment=env_vars,
             ports={
                 f"{self.broker_port}/tcp": self.broker_port,
-                f"{self.controller_port}/tcp": self.controller_port
+                f"{self.controller_port}/tcp": self.controller_port,
             },
             detach=True,
             network=self.network_name,  # TODO or use a shared network if your benchmark containers need it
-            remove=True  # auto-remove container on stop
+            remove=True,  # auto-remove container on stop
         )
 
         self._wait_for_readiness()
@@ -109,7 +118,10 @@ class KafkaManager(TechnologyManager):
         start = time.time()
         while time.time() - start < timeout:
             logs = self.container.logs().decode("utf-8")
-            if "Kafka startTimeMs" in logs or "started (kafka.server.KafkaServer)" in logs:
+            if (
+                "Kafka startTimeMs" in logs
+                or "started (kafka.server.KafkaServer)" in logs
+            ):
                 return
             time.sleep(1)
         raise TimeoutError("Kafka broker did not become ready in time.")
@@ -118,13 +130,14 @@ class KafkaManager(TechnologyManager):
         """Delete all non-internal topics from the broker."""
         logger.info("Resetting Kafka broker state...")
 
-        admin_conf = {'bootstrap.servers': "localhost:9092"}
+        admin_conf = {"bootstrap.servers": "localhost:9092"}
         admin_client = AdminClient(admin_conf)
 
         # Fetch list of topics
         metadata = admin_client.list_topics(timeout=10)
         topics_to_delete = [
-            t for t in metadata.topics.keys()
+            t
+            for t in metadata.topics.keys()
             if not t.startswith("__")  # Exclude internal topics
         ]
 
@@ -133,7 +146,9 @@ class KafkaManager(TechnologyManager):
             return
 
         logger.debug(f"Deleting topics: {topics_to_delete}")
-        delete_futures = admin_client.delete_topics(topics_to_delete, operation_timeout=30)
+        delete_futures = admin_client.delete_topics(
+            topics_to_delete, operation_timeout=30
+        )
 
         # Wait for each deletion to complete
         for topic, future in delete_futures.items():

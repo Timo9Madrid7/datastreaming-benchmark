@@ -1,7 +1,7 @@
 import sys
+
 from core.orchestrator.benchmark_manager import BenchmarkManager
 from core.orchestrator.utils.logger import logger
-
 
 if __name__ == "__main__":
     config_path = "benchmark_scenarios.json"
@@ -17,5 +17,4 @@ if __name__ == "__main__":
         logger.debug(f"Argument {i}: {sys.argv[i]}")
         i += 1
     logger.info(f"Executing benchmark in mode {mode}")
-    benchmark_manager.run(mode=mode,  duration_messages=duration_messages)
-    
+    benchmark_manager.run(mode=mode, duration_messages=duration_messages)
