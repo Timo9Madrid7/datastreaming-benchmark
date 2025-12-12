@@ -54,6 +54,10 @@ KafkaPublisher::~KafkaPublisher() {
         logger->log_debug("[Kafka Publisher] Flushing");
         rd_kafka_flush(producer_, 10 * 1000);  // Wait for delivery
         logger->log_debug("[Kafka Publisher] Destroying");
+
+        // destroy producer to free resources
+        rd_kafka_destroy(producer_);
+        producer_ = nullptr;
         int remaining = rd_kafka_wait_destroyed(5000);
         if (remaining != 0) {
             logger->log_error("[Kafka Publisher] Kafka still has " + std::to_string(remaining) + " references after destroy.");
@@ -79,7 +83,7 @@ void KafkaPublisher::initialize() {
 
     rd_kafka_conf_set_log_cb(conf_, kafka_log_callback);
     rd_kafka_conf_set_dr_msg_cb(conf_, dr_msg_cb);
-    rd_kafka_conf_set_opaque(conf_, static_cast<void*>(&logger));
+    rd_kafka_conf_set_opaque(conf_, static_cast<void*>(logger.get()));
 
     if (rd_kafka_conf_set(conf_, "bootstrap.servers", broker_.c_str(), errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK) {
         throw std::runtime_error("Failed to set bootstrap.servers: " + std::string(errstr));

@@ -1,3 +1,5 @@
+find_package(spdlog REQUIRED)
+
 add_library(core-logger STATIC) # archive of object files for use when linking other targets
 target_sources(core-logger PRIVATE 
         logger/Logger.cpp # this is required by other targets
@@ -5,6 +7,7 @@ target_sources(core-logger PRIVATE
 target_include_directories(core-logger PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/logger # make the contents of this location readable for targets that link the library
 )
+target_link_libraries(core-logger PRIVATE spdlog::spdlog) # link spdlog to core-logger
 set_target_properties(core-logger PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 add_library(core-loader STATIC)

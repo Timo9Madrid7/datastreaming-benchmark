@@ -6,7 +6,7 @@ import concurrent.futures
 
 from ..technology_manager import TechnologyManager, register_technology
 
-KAFKA_IMAGE = "bitnami/kafka:latest"
+KAFKA_IMAGE = "bitnamilegacy/kafka:latest"
 KAFKA_CONTAINER_NAME = "benchmark_kafka_broker"
 KAFKA_PORT = 9092
 CONTROLLER_PORT = 9093
