@@ -14,13 +14,14 @@ CONTROLLER_PORT = 9093
 @register_technology("kafka")
 class KafkaManager(TechnologyManager):
     
-    def __init__(self, tech_path, network_name = "benchmark_network", broker_host = KAFKA_CONTAINER_NAME, broker_port = KAFKA_PORT, controller_port = CONTROLLER_PORT):
+    def __init__(self, tech_path, network_name = "benchmark_network", broker_host = KAFKA_CONTAINER_NAME, broker_port = KAFKA_PORT, controller_port = CONTROLLER_PORT, kafka_image = KAFKA_IMAGE):
         TechnologyManager.__init__(self, tech_path, network_name)
         self.client = docker.from_env()
         self.container = None
         self.broker_host = broker_host
         self.broker_port = broker_port
         self.controller_port = controller_port
+        self.kafka_image = kafka_image
         
     def setup_tech(self):
         # existing = None
@@ -57,8 +58,8 @@ class KafkaManager(TechnologyManager):
         print("[KM] Starting Kafka broker container...")
 
         self.container = self.client.containers.run(
-            image=KAFKA_IMAGE,
-            name=KAFKA_CONTAINER_NAME,
+            image=self.kafka_image,
+            name=self.broker_host,
             environment=env_vars,
             ports={
                 f"{self.broker_port}/tcp": self.broker_port,

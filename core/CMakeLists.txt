@@ -1,9 +1,17 @@
-find_package(spdlog REQUIRED)
+add_library(core-utils STATIC) # archive of object files for use when linking other targets
+target_sources(core-utils PRIVATE # add more source files as needed
+    utils/Env.cpp
+)
+target_include_directories(core-utils PUBLIC # make the utils reachable for other targets
+    ${CMAKE_CURRENT_SOURCE_DIR}/utils 
+)
+set_target_properties(core-utils PROPERTIES POSITION_INDEPENDENT_CODE ON) # make it possible to link this static library to shared libraries
 
 add_library(core-logger STATIC) # archive of object files for use when linking other targets
 target_sources(core-logger PRIVATE 
         logger/Logger.cpp # this is required by other targets
 )
+find_package(spdlog REQUIRED)
 target_include_directories(core-logger PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/logger # make the contents of this location readable for targets that link the library
 )
