@@ -34,7 +34,7 @@ void KafkaCppConsumer::initialize() {
         logger->log_error(err_msg);
         throw std::runtime_error(err_msg);
     }
-    if(!vtopics.value().size()){
+    if(!vtopics || vtopics.value().empty()){
         err_msg = "[Kafka Consumer] Missing required environment variable TOPICS.";
         logger->log_error(err_msg);
         throw std::runtime_error(err_msg);
