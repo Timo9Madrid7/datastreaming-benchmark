@@ -1,8 +1,10 @@
 #include "Logger.hpp"
 
+#include <spdlog/async.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 
 #include <iostream>
+#include <spdlog/spdlog.h>
 
 // Implementation of CustomLevelFlag
 // This custom flag formatter maps our custom log levels to string representations
@@ -41,7 +43,9 @@ std::unique_ptr<spdlog::custom_flag_formatter> CustomLevelFlag::clone() const {
 Logger::Logger(Logger::LogLevel log_level) : current_log_level(log_level) {
     try {
         // Queue size: 8192, backing threads: 1
-        spdlog::init_thread_pool(8192, 1);
+        if (!spdlog::thread_pool()) {
+            spdlog::init_thread_pool(8192, 1);
+        }
 
         // Create a color sink for stdout
         auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
@@ -59,7 +63,7 @@ Logger::Logger(Logger::LogLevel log_level) : current_log_level(log_level) {
         auto formatter = std::make_unique<spdlog::pattern_formatter>();
         // Custom level flag
         formatter->add_flag<CustomLevelFlag>('u');
-        // Set the pattern: [Level Time,Message
+        // Set the pattern: [LEVEL] YYYY-MM-DD HH:MM:SS.microseconds,message
         formatter->set_pattern("[%^%u%$] %Y-%m-%d %H:%M:%S.%f,%v");
         async_logger->set_formatter(std::move(formatter));
 
@@ -75,7 +79,7 @@ Logger::~Logger() {
     if (async_logger) {
         async_logger->flush();
     }
-    spdlog::drop_all();
+    spdlog::drop(async_logger->name());
 }
 
 // Set the log level
