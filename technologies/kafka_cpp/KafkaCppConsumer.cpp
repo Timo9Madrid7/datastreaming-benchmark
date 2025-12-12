@@ -73,7 +73,7 @@ void KafkaCppConsumer::initialize() {
         }
     }
 
-    logger->log_debug("[Kafka Consumer] Subcription list will have size " + std::to_string(topic_names_.size()));
+    logger->log_debug("[Kafka Consumer] Subscription list will have size " + std::to_string(topic_names_.size()));
     RdKafka::ErrorCode err = consumer_->subscribe(topic_names_);
     if (err != RdKafka::ERR_NO_ERROR) {
         logger->log_error("[Kafka Consumer] Failed to subscribe to Kafka topics: " + RdKafka::err2str(err));
