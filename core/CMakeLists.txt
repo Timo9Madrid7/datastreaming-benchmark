@@ -1,6 +1,6 @@
 add_library(core-utils STATIC) # archive of object files for use when linking other targets
 target_sources(core-utils PRIVATE # add more source files as needed
-    utils/Env.cpp
+    utils/Utils.cpp
 )
 target_include_directories(core-utils PUBLIC # make the utils reachable for other targets
     ${CMAKE_CURRENT_SOURCE_DIR}/utils 
@@ -25,7 +25,7 @@ target_sources(core-loader PRIVATE
 target_include_directories(core-loader PUBLIC 
     ${CMAKE_CURRENT_SOURCE_DIR}/technology_loader # make the loader reachable for the apps
 )
-target_link_libraries(core-loader PUBLIC 
+target_link_libraries(core-loader PRIVATE 
     core-logger
 )
 # if (WIN32)
@@ -61,13 +61,15 @@ target_link_libraries(core-interfaces INTERFACE
 # set_target_properties(core-logger PROPERTIES EXPORT_NAME Core-logger POSITION_INDEPENDENT_CODE ON)
 
 add_library(factories SHARED) # Should be able to be static
-target_sources(factories PUBLIC
-    factory/PublisherFactory.cpp 
-    factory/ConsumerFactory.cpp
+target_sources(factories PUBLIC 
+    factory/Factory.cpp
 )
 target_include_directories(factories PUBLIC 
     ${CMAKE_CURRENT_SOURCE_DIR}/factory # Make the factories reachable for the apps and the tech-registrations
 )
-target_link_libraries(factories PUBLIC core-interfaces)
+target_link_libraries(factories PUBLIC 
+    core-interfaces 
+    core-utils
+)
 # set_target_properties(factories PROPERTIES EXPORT_NAME Factories POSITION_INDEPENDENT_CODE ON)
 

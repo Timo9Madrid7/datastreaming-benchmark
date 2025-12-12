@@ -3,7 +3,6 @@
 #include <thread>
 #include <cstdlib>
 #include <sstream>
-#include "PublisherFactory.hpp"
 
 std::string ZeroMQP2PPublisher::serialize(const Payload& message){
     logger->log_error("[ZeroMQP2P Publisher] serialize called without topic. This should not happen.");

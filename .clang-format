@@ -1,0 +1,30 @@
+# see https://clang.llvm.org/docs/ClangFormatStyleOptions.html
+---
+BasedOnStyle: LLVM
+
+ColumnLimit: 80
+ContinuationIndentWidth: 4
+
+BreakBeforeBraces: Attach
+BreakBeforeBinaryOperators: NonAssignment
+AlignAfterOpenBracket: Align
+
+AllowShortIfStatementsOnASingleLine: false
+AllowShortLoopsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: None
+
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+AlignOperands: DontAlign
+
+UseTab: ForIndentation
+IndentWidth: 4
+TabWidth: 4
+
+SortIncludes: true
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex:           '^<.*>'
+    Priority:        1
+  - Regex:           '^".*"'
+    Priority:        2

@@ -1,0 +1,29 @@
+[tool.black]
+line-length = 88
+target-version = ["py310"]
+include = '\.py$'
+force-exclude = '''
+(
+    ^core/(?!orchestrator/)
+)
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 88
+src_paths = ["core/orchestrator"]
+skip_glob = [
+    "analyses/*",
+    "diagrams/*",
+    "logs/*",
+    "technologies/*",
+    "test_scenarios/*",
+    "core/applications/*",
+    "core/factory/*",
+    "core/interfaces/*",
+    "core/logger/*",
+    "core/payload/*",
+    "core/technology_loader/*",
+    "core/tests/*",
+    "core/utils/*",
+]
