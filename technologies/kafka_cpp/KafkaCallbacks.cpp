@@ -8,16 +8,16 @@ KafkaEventCb::KafkaEventCb(std::shared_ptr<Logger> logger, std::string name)
 void KafkaEventCb::event_cb(RdKafka::Event& event) {
     switch (event.type()) {
         case RdKafka::Event::EVENT_ERROR:
-            logger_->log_error("[" + name_ + "]" + RdKafka::err2str(event.err()) + " - " + event.str());
+            logger_->log_error("[" + name_ + "] " + RdKafka::err2str(event.err()) + " - " + event.str());
             break;
         case RdKafka::Event::EVENT_STATS:
-            logger_->log_info("[" + name_ + "]" + event.str());
+            logger_->log_info("[" + name_ + "] " + event.str());
             break;
         case RdKafka::Event::EVENT_LOG:
-            logger_->log_debug("[" + name_ + "]" + std::to_string(event.severity()) + "-" + event.fac() + ": " + event.str());
+            logger_->log_debug("[" + name_ + "] " + std::to_string(event.severity()) + "-" + event.fac() + ": " + event.str());
             break;
         default:
-            logger_->log_info("[" + name_ + "]" + std::to_string(event.type()) + " (" + RdKafka::err2str(event.err()) + "): " + event.str());
+            logger_->log_info("[" + name_ + "] " + std::to_string(event.type()) + " (" + RdKafka::err2str(event.err()) + "): " + event.str());
             break;
     }
 }

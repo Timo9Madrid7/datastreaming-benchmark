@@ -43,7 +43,9 @@ std::unique_ptr<spdlog::custom_flag_formatter> CustomLevelFlag::clone() const {
 Logger::Logger(Logger::LogLevel log_level) : current_log_level(log_level) {
 	try {
 		// Queue size: 8192, backing threads: 1
-		spdlog::init_thread_pool(8192, 1);
+		if (!spdlog::thread_pool()) {
+			spdlog::init_thread_pool(8192, 1);
+		}
 
 		// Create a color sink for stdout
 		auto console_sink =
@@ -78,7 +80,7 @@ Logger::~Logger() {
 	if (async_logger) {
 		async_logger->flush();
 	}
-	spdlog::drop_all();
+	spdlog::drop(async_logger->name());
 }
 
 void Logger::set_level(Logger::LogLevel level) {

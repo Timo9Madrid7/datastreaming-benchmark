@@ -142,9 +142,9 @@ void KafkaCppPublisher::send_message(const Payload& message, std::string topic) 
 void KafkaCppPublisher::log_configuration() {
     std::unique_ptr<std::list<std::string>> dump(conf_->dump());
     
-    logger->log_config("[Kafka Pubublihser] [CONFIG_BEGIN]");
+    logger->log_config("[Kafka Publisher] [CONFIG_BEGIN]");
     for (auto it = dump->begin(); it != dump->end();) {
         logger->log_config("[CONFIG] " + *it++ + "=" + *it++);
     }
-    logger->log_config("[Kafka Publisher] [CONFIG_ENG]");
+    logger->log_config("[Kafka Publisher] [CONFIG_END]");
 }
