@@ -2,10 +2,10 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "Logger.hpp"
 #include "Payload.hpp"
-
 
 class IPublisher {
   protected:
@@ -13,10 +13,12 @@ class IPublisher {
 
   private:
 	/**
-	@brief Serializes a Payload object into a raw message string.
-	@param message The Payload object to serialize.
+	@brief Serializes a vector of Payload objects into a raw message.
+	@param messages The vector of Payload objects to serialize.
+	@param out The output buffer to store the serialized message.
+	@return True if serialization was successful, false otherwise.
 	*/
-	virtual std::string serialize(const Payload &message) = 0;
+	virtual bool serialize(const std::vector<Payload> &messages, void *out) = 0;
 
 	/**
 	@brief Logs the configuration of the publisher.

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <memory>
 #include <set>
 #include <string>
@@ -20,11 +21,14 @@ class IConsumer {
 	virtual void log_configuration() = 0;
 
 	/**
-	@brief Deserializes a raw message string into a Payload object.
-	@param raw_message The raw message string to deserialize.
-	@return The deserialized Payload object.
+	@brief Deserializes a raw message into a vector of Payload objects.
+	@param raw_message The raw message to deserialize.
+	@param len The length of the raw message.
+	@param out The Payload object to store the deserialized message.
+	@return True if deserialization was successful, false otherwise.
 	*/
-	virtual Payload deserialize(const std::string &raw_message) = 0;
+	virtual bool deserialize(const void *raw_message, size_t len,
+	                         Payload &out) = 0;
 
   public:
 	IConsumer(std::shared_ptr<Logger> loggerp) {

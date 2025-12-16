@@ -1,28 +1,28 @@
 #pragma once
 
-#include <string>
 #include <memory>
+#include <string>
 
 #include "IPublisher.hpp"
 #include "librdkafka/rdkafkacpp.h"
 
 class KafkaCppPublisher : public IPublisher {
-   public:
-    KafkaCppPublisher(std::shared_ptr<Logger> logger);
-    ~KafkaCppPublisher() override;
+  public:
+	KafkaCppPublisher(std::shared_ptr<Logger> logger);
+	~KafkaCppPublisher() override;
 
-    void initialize() override;
-    void send_message(const Payload& message, std::string topic) override;
+	void initialize() override;
+	void send_message(const Payload &message, std::string topic) override;
 
-   private:
-    std::string serialize(const Payload& payload) override;
-    void log_configuration() override;
+  private:
+	bool serialize(const std::vector<Payload> &messages, void *out) override;
+	void log_configuration() override;
 
-    std::string broker_;
-    
-    std::unique_ptr<RdKafka::Producer> producer_;
-    std::unique_ptr<RdKafka::Conf> conf_;
-    
-    std::unique_ptr<RdKafka::EventCb> event_cb_;
-    std::unique_ptr<RdKafka::DeliveryReportCb> dr_cb_;
+	std::string broker_;
+
+	std::unique_ptr<RdKafka::Producer> producer_;
+	std::unique_ptr<RdKafka::Conf> conf_;
+
+	std::unique_ptr<RdKafka::EventCb> event_cb_;
+	std::unique_ptr<RdKafka::DeliveryReportCb> dr_cb_;
 };

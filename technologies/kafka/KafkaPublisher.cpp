@@ -1,203 +1,247 @@
 #include "KafkaPublisher.hpp"
+
+#include <cstddef>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <string>
 
-static void kafka_log_callback(const rd_kafka_t* rk, int level,
-    const char* fac, const char* buf) {
-    std::cerr << "[librdkafka][" << fac << "] " << buf << std::endl;
+#include "Payload.hpp"
+
+static void kafka_log_callback(const rd_kafka_t *rk, int level, const char *fac,
+                               const char *buf) {
+	std::cerr << "[librdkafka][" << fac << "] " << buf << std::endl;
 }
 
-std::string extract_message_id(const rd_kafka_message_t* msg) {
-    return std::string(static_cast<const char*>(msg->key), msg->key_len);
+std::string extract_message_id(const rd_kafka_message_t *msg) {
+	return std::string(static_cast<const char *>(msg->key), msg->key_len);
 }
 
-void dr_msg_cb(rd_kafka_t* rk, const rd_kafka_message_t* rkmessage, void* /*opaque*/) {
-    Logger* logger = static_cast<Logger*>(rd_kafka_opaque(rk));
+void dr_msg_cb(rd_kafka_t *rk, const rd_kafka_message_t *rkmessage,
+               void * /*opaque*/) {
+	Logger *logger = static_cast<Logger *>(rd_kafka_opaque(rk));
 
-    if (rkmessage->err) {
-        logger->log_study("DeliveryError," + extract_message_id(rkmessage) + 
-                          "," + std::to_string(rkmessage->len) + 
-                          ",-1," +
-                          rd_kafka_topic_name(rkmessage->rkt));
-    } else {
-        logger->log_study("Publication," + extract_message_id(rkmessage) + 
-                          "," + std::to_string(rkmessage->len) +  
-                          "," + rd_kafka_topic_name(rkmessage->rkt) + 
-                          "," + std::to_string(rkmessage->len));
-    }
+	if (rkmessage->err) {
+		logger->log_study("DeliveryError," + extract_message_id(rkmessage) + ","
+		                  + std::to_string(rkmessage->len) + ",-1,"
+		                  + rd_kafka_topic_name(rkmessage->rkt));
+	} else {
+		logger->log_study("Publication," + extract_message_id(rkmessage) + ","
+		                  + std::to_string(rkmessage->len) + ","
+		                  + rd_kafka_topic_name(rkmessage->rkt) + ","
+		                  + std::to_string(rkmessage->len));
+	}
 }
 
-KafkaPublisher::KafkaPublisher(std::shared_ptr<Logger> logger)
-    try : IPublisher(logger), producer_(nullptr), conf_(nullptr) {
-        logger->log_info("[Kafka Publisher] KafkaPublisher created.");
-    } catch (const std::exception &e){
-        logger->log_error("[Kafka Publisher] Constructor failed: " + std::string(e.what()));
+KafkaPublisher::KafkaPublisher(std::shared_ptr<Logger> logger) try
+    : IPublisher(logger), producer_(nullptr), conf_(nullptr) {
+	logger->log_info("[Kafka Publisher] KafkaPublisher created.");
+} catch (const std::exception &e) {
+	logger->log_error("[Kafka Publisher] Constructor failed: "
+	                  + std::string(e.what()));
 }
 
 KafkaPublisher::~KafkaPublisher() {
-    logger->log_debug("[Kafka Publisher] Cleaning up Kafka topic handles...");
+	logger->log_debug("[Kafka Publisher] Cleaning up Kafka topic handles...");
 
-    for (auto& [topic, handle] : topic_handles_) {
-        logger->log_debug("[Kafka Publisher] Destroying topic handle for: " + topic);
-        destroy_topic_handle(topic);
-        logger->log_debug("[Kafka Publisher] Topic handle for '" + topic + "' has been destroyed");
-    }
-    logger->log_debug("[Kafka Publisher] Destroyed topic handles");
-    topic_handles_.clear();
+	for (auto &[topic, handle] : topic_handles_) {
+		logger->log_debug("[Kafka Publisher] Destroying topic handle for: "
+		                  + topic);
+		destroy_topic_handle(topic);
+		logger->log_debug("[Kafka Publisher] Topic handle for '" + topic
+		                  + "' has been destroyed");
+	}
+	logger->log_debug("[Kafka Publisher] Destroyed topic handles");
+	topic_handles_.clear();
 
-    if (producer_) {
-        logger->log_debug("[Kafka Publisher] Polling before flush...");
-        while (rd_kafka_outq_len(producer_) > 0) {
-            rd_kafka_poll(producer_, 100);  // wait up to 100ms
-        }
-        logger->log_debug("[Kafka Publisher] Flushing");
-        rd_kafka_flush(producer_, 10 * 1000);  // Wait for delivery
-        logger->log_debug("[Kafka Publisher] Destroying");
+	if (producer_) {
+		logger->log_debug("[Kafka Publisher] Polling before flush...");
+		while (rd_kafka_outq_len(producer_) > 0) {
+			rd_kafka_poll(producer_, 100); // wait up to 100ms
+		}
+		logger->log_debug("[Kafka Publisher] Flushing");
+		rd_kafka_flush(producer_, 10 * 1000); // Wait for delivery
+		logger->log_debug("[Kafka Publisher] Destroying");
 
-        // destroy producer to free resources
-        rd_kafka_destroy(producer_);
-        producer_ = nullptr;
-        int remaining = rd_kafka_wait_destroyed(5000);
-        if (remaining != 0) {
-            logger->log_error("[Kafka Publisher] Kafka still has " + std::to_string(remaining) + " references after destroy.");
-        } else {
-            logger->log_debug("[Kafka Publisher] Kafka destroyed cleanly.");
-        }
-    }
-    if (conf_) {
-        rd_kafka_conf_destroy(conf_);
-        conf_ = nullptr;
-    }
-    logger->log_debug("[Kafka Publisher] Kafka destructor finished.");
+		// destroy producer to free resources
+		rd_kafka_destroy(producer_);
+		producer_ = nullptr;
+		int remaining = rd_kafka_wait_destroyed(5000);
+		if (remaining != 0) {
+			logger->log_error("[Kafka Publisher] Kafka still has "
+			                  + std::to_string(remaining)
+			                  + " references after destroy.");
+		} else {
+			logger->log_debug("[Kafka Publisher] Kafka destroyed cleanly.");
+		}
+	}
+	if (conf_) {
+		rd_kafka_conf_destroy(conf_);
+		conf_ = nullptr;
+	}
+	logger->log_debug("[Kafka Publisher] Kafka destructor finished.");
 }
 
 void KafkaPublisher::initialize() {
-    logger->log_study("Initializing");
-    const char* vendpoint = std::getenv("PUBLISHER_ENDPOINT");
-    broker_ = vendpoint ? std::string(vendpoint) + ":9092" : "localhost:9092";
-    logger->log_info("[Kafka Publisher] Using broker: " + broker_);
+	logger->log_study("Initializing");
+	const char *vendpoint = std::getenv("PUBLISHER_ENDPOINT");
+	broker_ = vendpoint ? std::string(vendpoint) + ":9092" : "localhost:9092";
+	logger->log_info("[Kafka Publisher] Using broker: " + broker_);
 
-    char errstr[512];
-    conf_ = rd_kafka_conf_new();
+	char errstr[512];
+	conf_ = rd_kafka_conf_new();
 
-    rd_kafka_conf_set_log_cb(conf_, kafka_log_callback);
-    rd_kafka_conf_set_dr_msg_cb(conf_, dr_msg_cb);
-    rd_kafka_conf_set_opaque(conf_, static_cast<void*>(logger.get()));
+	rd_kafka_conf_set_log_cb(conf_, kafka_log_callback);
+	rd_kafka_conf_set_dr_msg_cb(conf_, dr_msg_cb);
+	rd_kafka_conf_set_opaque(conf_, static_cast<void *>(logger.get()));
 
-    if (rd_kafka_conf_set(conf_, "bootstrap.servers", broker_.c_str(), errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK) {
-        throw std::runtime_error("Failed to set bootstrap.servers: " + std::string(errstr));
-    }
+	if (rd_kafka_conf_set(conf_, "bootstrap.servers", broker_.c_str(), errstr,
+	                      sizeof(errstr))
+	    != RD_KAFKA_CONF_OK) {
+		throw std::runtime_error("Failed to set bootstrap.servers: "
+		                         + std::string(errstr));
+	}
 
-    rd_kafka_conf_t* snapshot_conf = rd_kafka_conf_dup(conf_);
+	rd_kafka_conf_t *snapshot_conf = rd_kafka_conf_dup(conf_);
 
-    if (!(producer_ = rd_kafka_new(RD_KAFKA_PRODUCER, snapshot_conf, errstr, sizeof(errstr)))) {
-        throw std::runtime_error("Failed to create producer: " + std::string(errstr));
-    }
-    snapshot_conf = nullptr;
+	if (!(producer_ = rd_kafka_new(RD_KAFKA_PRODUCER, snapshot_conf, errstr,
+	                               sizeof(errstr)))) {
+		throw std::runtime_error("Failed to create producer: "
+		                         + std::string(errstr));
+	}
+	snapshot_conf = nullptr;
 
-    logger->log_study("Initialized");
-    log_configuration();
+	logger->log_study("Initialized");
+	log_configuration();
 }
 
-std::string KafkaPublisher::serialize(const Payload& payload){
-    std::vector<char> buffer;
+bool KafkaPublisher::serialize(const std::vector<Payload> &messages,
+                               void *out) {
+	const Payload &message = messages[0];
 
-    // Message ID
-    uint16_t id_len = static_cast<uint16_t>(payload.message_id.size());
-    buffer.insert(buffer.end(),
-                  reinterpret_cast<const char*>(&id_len),
-                  reinterpret_cast<const char*>(&id_len) + sizeof(id_len));
-    buffer.insert(buffer.end(), payload.message_id.begin(), payload.message_id.end());
+	char *ptr = static_cast<char *>(out);
 
-    // Kind
-    uint8_t kind = static_cast<uint8_t>(payload.kind);
-    buffer.insert(buffer.end(),
-                  reinterpret_cast<const char*>(&kind),
-                  reinterpret_cast<const char*>(&kind) + sizeof(kind));
+	// Message ID Length
+	const uint16_t id_len = static_cast<uint16_t>(message.message_id.size());
+	memcpy(ptr, &id_len, sizeof(id_len));
+	ptr += sizeof(id_len);
 
-    // Data size
-    size_t size = static_cast<size_t>(payload.data_size);
-    buffer.insert(buffer.end(),
-                  reinterpret_cast<const char*>(&size),
-                  reinterpret_cast<const char*>(&size) + sizeof(size));
+	// Message ID
+	memcpy(ptr, message.message_id.data(), id_len);
+	ptr += id_len;
 
-    // Data
-    // todo: variety of PayloadKind may require different serialization methods
-    buffer.insert(buffer.end(), payload.data.begin(), payload.data.end());
+	// Kind
+	const uint8_t kind = static_cast<uint8_t>(message.kind);
+	memcpy(ptr, &kind, sizeof(kind));
+	ptr += sizeof(kind);
 
-    return std::string(buffer.begin(), buffer.end());
+	// Data size
+	const size_t data_size = static_cast<size_t>(message.data_size);
+	memcpy(ptr, &data_size, sizeof(data_size));
+	ptr += sizeof(data_size);
+
+	// Data
+	if (data_size > 0) {
+		memcpy(ptr, message.data.data(), data_size);
+	}
+
+	return true;
 }
 
-void KafkaPublisher::send_message(const Payload& message, std::string topic) {
-    logger->log_study("Intention," + message.message_id + "," + std::to_string(message.data_size) + "," + topic);
-    std::string serialized = serialize(message);
+void KafkaPublisher::send_message(const Payload &message, std::string topic) {
+	logger->log_study("Intention," + message.message_id + ","
+	                  + std::to_string(message.data_size) + "," + topic);
 
-    rd_kafka_topic_t* topic_handle = get_or_create_topic_handle(topic);
-    if (!topic_handle) {
-        logger->log_error("[Kafka Publisher] Failed to obtain topic handle for " + topic);
-        return;
-    }
+	const size_t serialized_size = sizeof(uint16_t) // Message ID Length
+	    + message.message_id.size()                 // Message ID
+	    + sizeof(uint8_t)                           // Kind
+	    + sizeof(size_t)                            // Data size
+	    + message.data_size;                        // Data
+	std::string serialized(serialized_size, '\0');
+	if (serialize({message}, serialized.data()) == false) {
+		logger->log_error(
+		    "[Kafka Publisher] Serialization failed for message ID: "
+		    + message.message_id);
+		return;
+	}
 
-    // todo termination signal -> rd_kafka_topic_destroy?
-    int err = rd_kafka_produce(
-        topic_handle,                                           // topic
-        RD_KAFKA_PARTITION_UA,                                  // partition
-        RD_KAFKA_MSG_F_COPY,                                    // copy payload
-        const_cast<char*>(serialized.data()),                   // payload ptr
-        serialized.size(),                                      // payload len
-        message.message_id.c_str(), message.message_id.size(),   // key
-        nullptr                                                 // msg_opaque
-    );
-    rd_kafka_poll(producer_, 0);
+	rd_kafka_topic_t *topic_handle = get_or_create_topic_handle(topic);
+	if (!topic_handle) {
+		logger->log_error("[Kafka Publisher] Failed to obtain topic handle for "
+		                  + topic);
+		return;
+	}
 
-    if (err != 0) {
-        logger->log_error("[Kafka Publisher] Produce failed: " + std::string(rd_kafka_err2str(rd_kafka_last_error())));
-    } else {
-        logger->log_debug("[Kafka Publisher] Message queued for topic: " + topic);
-    }
-    // If message is end-of-stream, destroy the topic handle now
-    if (message.message_id.find(TERMINATION_SIGNAL) != std::string::npos) {
-        logger->log_info("[Kafka Publisher] Received termination signal — destroying topic handle for: " + topic);
-        destroy_topic_handle(topic);
-    }
+	// todo termination signal -> rd_kafka_topic_destroy?
+	int err = rd_kafka_produce(
+	    topic_handle,                                          // topic
+	    RD_KAFKA_PARTITION_UA,                                 // partition
+	    RD_KAFKA_MSG_F_COPY,                                   // copy payload
+	    const_cast<char *>(serialized.data()),                 // payload ptr
+	    serialized.size(),                                     // payload len
+	    message.message_id.c_str(), message.message_id.size(), // key
+	    nullptr                                                // msg_opaque
+	);
+	rd_kafka_poll(producer_, 0);
+
+	if (err != 0) {
+		logger->log_error(
+		    "[Kafka Publisher] Produce failed: "
+		    + std::string(rd_kafka_err2str(rd_kafka_last_error())));
+	} else {
+		logger->log_debug("[Kafka Publisher] Message queued for topic: "
+		                  + topic);
+	}
+	// If message is end-of-stream, destroy the topic handle now
+	if (message.message_id.find(TERMINATION_SIGNAL) != std::string::npos) {
+		logger->log_info("[Kafka Publisher] Received termination signal — "
+		                 "destroying topic handle for: "
+		                 + topic);
+		destroy_topic_handle(topic);
+	}
 }
 
-inline rd_kafka_topic_t* KafkaPublisher::get_or_create_topic_handle(const std::string& topic) {
-    auto it = topic_handles_.find(topic);
-    if (it != topic_handles_.end()) {
-        return it->second;
-    }
+inline rd_kafka_topic_t *
+KafkaPublisher::get_or_create_topic_handle(const std::string &topic) {
+	auto it = topic_handles_.find(topic);
+	if (it != topic_handles_.end()) {
+		return it->second;
+	}
 
-    rd_kafka_topic_t* handle = rd_kafka_topic_new(producer_, topic.c_str(), nullptr);
-    if (!handle) {
-        logger->log_error("[Kafka Publisher] Failed to create topic handle for: " + topic);
-        return nullptr;
-    }
+	rd_kafka_topic_t *handle =
+	    rd_kafka_topic_new(producer_, topic.c_str(), nullptr);
+	if (!handle) {
+		logger->log_error(
+		    "[Kafka Publisher] Failed to create topic handle for: " + topic);
+		return nullptr;
+	}
 
-    topic_handles_[topic] = handle;
-    logger->log_debug("[Kafka Publisher] Created new topic handle for: " + topic);
-    return handle;
+	topic_handles_[topic] = handle;
+	logger->log_debug("[Kafka Publisher] Created new topic handle for: "
+	                  + topic);
+	return handle;
 }
 
-inline void KafkaPublisher::destroy_topic_handle(const std::string& topic) {
-    auto it = topic_handles_.find(topic);
-    if (it != topic_handles_.end()) {
-        rd_kafka_topic_destroy(it->second);
-        topic_handles_.erase(it);
-        logger->log_debug("[Kafka Publisher] Destroyed topic handle for: " + topic);
-    }
+inline void KafkaPublisher::destroy_topic_handle(const std::string &topic) {
+	auto it = topic_handles_.find(topic);
+	if (it != topic_handles_.end()) {
+		rd_kafka_topic_destroy(it->second);
+		topic_handles_.erase(it);
+		logger->log_debug("[Kafka Publisher] Destroyed topic handle for: "
+		                  + topic);
+	}
 }
 
 void KafkaPublisher::log_configuration() {
-    size_t cnt;
-    const char** conf = rd_kafka_conf_dump(conf_, &cnt);
+	size_t cnt;
+	const char **conf = rd_kafka_conf_dump(conf_, &cnt);
 
-    logger->log_config("[Kafka Publisher] [CONFIG_BEGIN]");
-    for (size_t i = 0; i < cnt; i += 2) {
-        logger->log_config("[CONFIG] " + std::string(conf[i]) + "=" + std::string(conf[i+1]));
-    }
-    logger->log_config("[Kafka Publisher] [CONFIG_END]");
+	logger->log_config("[Kafka Publisher] [CONFIG_BEGIN]");
+	for (size_t i = 0; i < cnt; i += 2) {
+		logger->log_config("[CONFIG] " + std::string(conf[i]) + "="
+		                   + std::string(conf[i + 1]));
+	}
+	logger->log_config("[Kafka Publisher] [CONFIG_END]");
 
-    rd_kafka_conf_dump_free(conf, cnt);
+	rd_kafka_conf_dump_free(conf, cnt);
 }
