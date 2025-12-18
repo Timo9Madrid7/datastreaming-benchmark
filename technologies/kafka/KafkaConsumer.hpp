@@ -14,7 +14,7 @@ class KafkaConsumer : public IConsumer {
 
 	void initialize() override;
 	void subscribe(const std::string &topic) override;
-	Payload receive_message() override;
+	void start_loop() override;
 	bool deserialize(const void *raw_message, size_t len,
 	                 Payload &out) override;
 	void log_configuration() override;

@@ -7,6 +7,8 @@
 #include <sstream>
 #include <utility>
 
+#include "Utils.hpp"
+
 KafkaConsumer::KafkaConsumer(std::shared_ptr<Logger> logger)
     : IConsumer(logger), consumer_(nullptr), conf_(nullptr),
       subscription_list_(nullptr), initialized_(false) {
@@ -47,11 +49,12 @@ void KafkaConsumer::subscribe(const std::string &topic) {
 		                  "after initialization.");
 		return;
 	}
-
-	if (subscribed_streams.emplace(topic, "default").second) {
-		logger->log_info("[Kafka Consumer] Queued subscription for topic: "
-		                 + topic);
-		topic_names_.insert(topic);
+	if (topic_names_.insert(topic).second) {
+		logger->log_info("[Kafka Consumer] Subscribing to topic: " + topic);
+		subscribed_streams.inc();
+	} else {
+		logger->log_debug("[Kafka Consumer] Already subscribed to topic: "
+		                  + topic);
 	}
 }
 
@@ -62,11 +65,30 @@ void KafkaConsumer::initialize() {
 		    "[Kafka Consumer] Kafka Consumer already initialized.");
 		return;
 	}
-	std::string consumer_id = std::getenv("CONTAINER_ID");
-	const char *vendpoint = std::getenv("CONSUMER_ENDPOINT");
-	broker_ = vendpoint ? std::string(vendpoint) + ":9092" : "localhost:9092";
 
+	const std::string vendpoint =
+	    utils::get_env_var_or_default("CONSUMER_ENDPOINT", "localhost");
+	const std::string port =
+	    utils::get_env_var_or_default("CONSUMER_PORT", "9092");
+	broker_ = vendpoint + ":" + port;
 	logger->log_info("[Kafka Consumer] Using broker: " + broker_);
+
+	const std::optional<std::string> consumer_id =
+	    utils::get_env_var("CONTAINER_ID");
+	const std::optional<std::string> vtopics = utils::get_env_var("TOPICS");
+	std::string err_msg;
+	if (!consumer_id) {
+		err_msg = "[Kafka Consumer] Missing required environment variable "
+		          "CONTAINER_ID.";
+		logger->log_error(err_msg);
+		throw std::runtime_error(err_msg);
+	}
+	if (!vtopics || vtopics.value().empty()) {
+		err_msg =
+		    "[Kafka Consumer] Missing required environment variable TOPICS.";
+		logger->log_error(err_msg);
+		throw std::runtime_error(err_msg);
+	}
 
 	char errstr[512];
 	conf_ = rd_kafka_conf_new();
@@ -110,29 +132,20 @@ void KafkaConsumer::initialize() {
 
 	rd_kafka_poll_set_consumer(consumer_);
 
-	const char *vtopics = std::getenv("TOPICS");
-	if (!vtopics) {
-		subscribed_streams.insert({broker_, consumer_id.substr(1)});
-		subscribe(consumer_id.substr(1));
-		logger->log_debug("[Kafka Consumer] TOPICS not set, default to topic "
-		                  "with same numerical id: "
-		                  + consumer_id.substr(1));
-	} else {
-		std::istringstream topics(vtopics);
-		std::string topic;
-		while (std::getline(topics, topic, ',')) {
-			logger->log_debug("[Kafka Consumer] Handling subscription to topic "
-			                  + topic);
-			if (!topic.empty()) {
-				logger->log_info("[Kafka Consumer] Connecting to stream ("
-				                 + broker_ + "," + topic + ")");
-				subscribe(topic);
-			}
+	std::istringstream topics(vtopics.value_or(""));
+	std::string topic;
+	while (std::getline(topics, topic, ',')) {
+		logger->log_debug("[Kafka Consumer] Handling subscription to topic "
+		                  + topic);
+		if (!topic.empty()) {
+			logger->log_info("[Kafka Consumer] Connecting to stream (" + broker_
+			                 + "," + topic + ")");
+			subscribe(topic);
 		}
 	}
 
 	logger->log_debug("[KafkaConsumer] Subscription list will have size "
-	                  + std::to_string(static_cast<int>(topic_names_.size())));
+	                  + std::to_string(subscribed_streams.get()));
 	subscription_list_ = rd_kafka_topic_partition_list_new(
 	    static_cast<int>(topic_names_.size()));
 	for (const auto &topic : topic_names_) {
@@ -202,58 +215,67 @@ bool KafkaConsumer::deserialize(const void *raw_message, size_t len,
 	return true;
 }
 
-Payload KafkaConsumer::receive_message() {
-	logger->log_debug("[Kafka Consumer] Polling for messages...");
-	rd_kafka_message_t *msg = rd_kafka_consumer_poll(consumer_, 2000);
-	if (!msg) {
-		logger->log_debug("[Kafka Consumer] Poll returned null message");
-		return {};
-	}
-	std::string topic = msg->rkt ? rd_kafka_topic_name(msg->rkt) : "unknown";
+void KafkaConsumer::start_loop() {
+	while (true) {
+		logger->log_debug("[Kafka Consumer] Polling for messages...");
+		rd_kafka_message_t *msg = rd_kafka_consumer_poll(consumer_, 2000);
 
-	Payload payload = {};
-	if (msg->err) {
-		logger->log_error("[Kafka Consumer] Kafka error: "
-		                  + std::string(rd_kafka_message_errstr(msg)));
-	} else if (msg->len > 0) {
+		if (!msg) {
+			logger->log_debug("[Kafka Consumer] Poll returned null message");
+			continue;
+		}
+
+		if (msg->err) {
+			logger->log_debug("[Kafka Consumer] Kafka error: "
+			                  + std::string(rd_kafka_message_errstr(msg)));
+			rd_kafka_message_destroy(msg);
+			continue;
+		}
+
+		std::string topic =
+		    msg->rkt ? rd_kafka_topic_name(msg->rkt) : "unknown";
+
+		if (msg->len == 0) {
+			logger->log_debug(
+			    "[Kafka Consumer] Received empty message on topic: " + topic);
+			rd_kafka_message_destroy(msg);
+			continue;
+		}
+
+		Payload payload = {};
 		logger->log_info("[Kafka Consumer] Received message on topic '" + topic
 		                 + "' with " + std::to_string(msg->len) + " bytes");
-		try {
-			// COPY from message buffer BEFORE destroying
-			if (deserialize(msg->payload, msg->len, payload) == false) {
-				logger->log_error("[Kafka Consumer] Deserialization failed for "
-				                  "message on topic: "
-				                  + topic);
-				rd_kafka_message_destroy(msg);
-				return {};
-			}
-		} catch (const std::exception &e) {
-			logger->log_error("[Kafka Consumer] Failed to deserialize payload: "
-			                  + std::string(e.what()));
+
+		if (deserialize(msg->payload, msg->len, payload) == false) {
+			logger->log_error("[Kafka Consumer] Deserialization failed for "
+			                  "message on topic: "
+			                  + topic);
+			rd_kafka_message_destroy(msg);
+			continue;
 		}
 
-		if (payload.message_id.find(TERMINATION_SIGNAL) != std::string::npos) {
-			terminated_streams.insert({broker_, topic});
-			logger->log_info("[Kafka Consumer] Received termination for topic: "
-			                 + topic);
-			logger->log_debug("[Kafka Consumer] Streams closed: "
-			                  + std::to_string(terminated_streams.size()) + "/"
-			                  + std::to_string(subscribed_streams.size()));
-			// rd_kafka_message_destroy(msg);
-			payload = Payload::make(
-			    payload.message_id.substr(0, payload.message_id.find(':')) + "-"
-			        + topic,
-			    0, 0, PayloadKind::TERMINATION);
-		}
 		logger->log_study("Reception," + payload.message_id + ","
 		                  + std::to_string(payload.data_size) + "," + topic
 		                  + "," + std::to_string(msg->len));
-	} else {
-		logger->log_error("[Kafka Consumer] Unknown msg handling condition");
-	}
+		rd_kafka_message_destroy(msg);
 
-	rd_kafka_message_destroy(msg);
-	return payload;
+		if (payload.message_id.find(TERMINATION_SIGNAL) != std::string::npos) {
+			subscribed_streams.dec();
+
+			logger->log_info(
+			    "[Kafka Consumer] Received termination signal for topic: "
+			    + topic);
+
+			if (subscribed_streams.get() == 0) {
+				logger->log_info("[Kafka Consumer] All streams "
+				                 "terminated. Exiting.");
+				break;
+			}
+
+			logger->log_info("[Kafka Consumer] Remaining subscribed streams: "
+			                 + std::to_string(subscribed_streams.get()));
+		}
+	}
 }
 
 void KafkaConsumer::log_configuration() {
