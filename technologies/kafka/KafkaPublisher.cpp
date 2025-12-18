@@ -3,14 +3,15 @@
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
-#include <iostream>
 #include <string>
 
 #include "Payload.hpp"
 
 static void kafka_log_callback(const rd_kafka_t *rk, int level, const char *fac,
                                const char *buf) {
-	std::cerr << "[librdkafka][" << fac << "] " << buf << std::endl;
+	Logger *logger = static_cast<Logger *>(rd_kafka_opaque(rk));
+	logger->log_error("[librdkafka][" + std::string(fac) + "] "
+	                  + std::string(buf));
 }
 
 std::string extract_message_id(const rd_kafka_message_t *msg) {
