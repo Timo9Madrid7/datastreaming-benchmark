@@ -4,6 +4,7 @@
 #include <memory>
 #include <optional>
 #include <sstream>
+#include <unordered_set>
 #include <utility>
 
 #include "Logger.hpp"
@@ -16,6 +17,16 @@ KafkaCppConsumer::KafkaCppConsumer(std::shared_ptr<Logger> logger)
 }
 
 KafkaCppConsumer::~KafkaCppConsumer() {
+	if (consumer_) {
+		RdKafka::ErrorCode err = consumer_->unsubscribe();
+		if (err != RdKafka::ERR_NO_ERROR) {
+			logger->log_error("[Kafka Consumer] Failed to unsubscribe: "
+			                  + RdKafka::err2str(err));
+		}
+		consumer_->close();
+		consumer_.reset();
+		logger->log_debug("[Kafka Consumer] Kafka consumer closed.");
+	}
 	logger->log_debug("[Kafka Consumer] Destructor finished");
 }
 
@@ -46,53 +57,63 @@ void KafkaCppConsumer::initialize() {
 		throw std::runtime_error(err_msg);
 	}
 
-	std::string errstr;
 	conf_.reset(RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL));
+	if (!conf_) {
+		err_msg = "[Kafka Consumer] Failed to create global config.";
+		logger->log_error(err_msg);
+		throw std::runtime_error(err_msg);
+	}
 
-	if (conf_->set("bootstrap.servers", broker_, errstr)
+	if (conf_->set("bootstrap.servers", broker_, err_msg)
 	    != RdKafka::Conf::CONF_OK) {
 		logger->log_error("[Kafka Consumer] Failed to set bootstrap.servers: "
-		                  + errstr);
-		throw std::runtime_error("Failed to set bootstrap.servers: " + errstr);
+		                  + err_msg);
+		throw std::runtime_error("Failed to set bootstrap.servers: " + err_msg);
 	}
 
-	if (conf_->set("group.id", "benchmark_group", errstr)
+	if (conf_->set("group.id", "benchmark_group", err_msg)
 	    != RdKafka::Conf::CONF_OK) {
-		logger->log_error("[Kafka Consumer] Failed to set group.id: " + errstr);
-		throw std::runtime_error("Failed to set group.id: " + errstr);
+		logger->log_error("[Kafka Consumer] Failed to set group.id: "
+		                  + err_msg);
+		throw std::runtime_error("Failed to set group.id: " + err_msg);
 	}
 
-	if (conf_->set("enable.auto.commit", "false", errstr)
+	if (conf_->set("enable.auto.commit", "false", err_msg)
 	    != RdKafka::Conf::CONF_OK) {
 		logger->log_error("[Kafka Consumer] Failed to set enable.auto.commit: "
-		                  + errstr);
-		throw std::runtime_error("Failed to set enable.auto.commit: " + errstr);
+		                  + err_msg);
+		throw std::runtime_error("Failed to set enable.auto.commit: "
+		                         + err_msg);
 	}
 
-	if (conf_->set("auto.offset.reset", "earliest", errstr)
+	if (conf_->set("auto.offset.reset", "earliest", err_msg)
 	    != RdKafka::Conf::CONF_OK) {
 		logger->log_error("[Kafka Consumer] Failed to set auto.offset.reset: "
-		                  + errstr);
-		throw std::runtime_error("Failed to set auto.offset.reset: " + errstr);
+		                  + err_msg);
+		throw std::runtime_error("Failed to set auto.offset.reset: " + err_msg);
 	}
 
-	consumer_.reset(RdKafka::KafkaConsumer::create(conf_.get(), errstr));
+	consumer_.reset(RdKafka::KafkaConsumer::create(conf_.get(), err_msg));
 
 	if (!consumer_) {
 		logger->log_error("[Kafka Consumer] Failed to create consumer: "
-		                  + errstr);
-		throw std::runtime_error("Failed to create consumer: " + errstr);
+		                  + err_msg);
+		throw std::runtime_error("Failed to create consumer: " + err_msg);
 	}
 
 	std::istringstream topics(vtopics.value_or(""));
 	std::string topic;
+	std::unordered_set<std::string> unique_topics;
 	while (std::getline(topics, topic, ',')) {
 		logger->log_debug("[Kafka Consumer] Handling subscription to topic "
 		                  + topic);
-		if (!topic.empty()) {
+		if (!topic.empty() && unique_topics.insert(topic).second) {
 			logger->log_info("[Kafka Consumer] Connecting to stream (" + broker_
 			                 + "," + topic + ")");
 			subscribe(topic);
+		} else {
+			logger->log_debug(
+			    "[Kafka Consumer] Skipping empty or duplicate topic.");
 		}
 	}
 
@@ -113,11 +134,10 @@ void KafkaCppConsumer::initialize() {
 }
 
 void KafkaCppConsumer::subscribe(const std::string &topic) {
-	if (subscribed_streams.emplace(topic, "default").second) {
-		logger->log_info("[Kafka Consumer] Queued subscription for topic: "
-		                 + topic);
-		topic_names_.push_back(topic);
-	}
+	logger->log_info("[Kafka Consumer] Queued subscription for topic: "
+	                 + topic);
+	topic_names_.push_back(topic);
+	subscribed_streams.inc();
 }
 
 bool KafkaCppConsumer::deserialize(const void *raw_message, size_t len,
@@ -164,58 +184,75 @@ bool KafkaCppConsumer::deserialize(const void *raw_message, size_t len,
 	return true;
 }
 
-Payload KafkaCppConsumer::receive_message() {
-	logger->log_debug("[Kafka Consumer] Polling for messages...");
-	std::unique_ptr<RdKafka::Message> msg(consumer_->consume(2000));
+void KafkaCppConsumer::start_loop() {
+	while (true) {
+		logger->log_debug("[Kafka Consumer] Polling for messages...");
+		std::unique_ptr<RdKafka::Message> msg(consumer_->consume(2000));
 
-	if (!msg) {
-		logger->log_debug("[Kafka Consumer] Poll returned null message");
-		return {};
-	}
+		if (!msg) {
+			logger->log_debug("[Kafka Consumer] Poll returned null message");
+			continue;
+		}
 
-	std::string topic =
-	    !msg->topic_name().empty() ? msg->topic_name() : "unknown";
+		if (msg->err() == RdKafka::ERR__TIMED_OUT) {
+			logger->log_debug("[Kafka Consumer] Poll timed out with no "
+			                  "messages available.");
+			continue;
+		}
 
-	Payload payload = {};
-	if (msg->err()) {
-		logger->log_error("[Kafka Consumer] Kafka error: "
-		                  + RdKafka::err2str(msg->err()));
-	} else if (msg->len() > 0) {
+		if (msg->err() != RdKafka::ERR_NO_ERROR) {
+			logger->log_error("[Kafka Consumer] Error while consuming message: "
+			                  + msg->errstr());
+			continue;
+		}
+
+		std::string topic =
+		    !msg->topic_name().empty() ? msg->topic_name() : "unknown";
+
+		if (msg->err() == RdKafka::ERR__PARTITION_EOF) {
+			logger->log_debug("[Kafka Consumer] Reached end of partition for "
+			                  "topic: "
+			                  + topic);
+			continue;
+		}
+
+		if (msg->len() == 0) {
+			logger->log_debug(
+			    "[Kafka Consumer] Received empty message on topic: " + topic);
+			continue;
+		}
+
+		Payload payload = {};
 		logger->log_info("[Kafka Consumer] Received message on topic '" + topic
 		                 + "' with " + std::to_string(msg->len()) + " bytes");
-		try {
-			if (deserialize(msg->payload(), msg->len(), payload)
-			    == false) {
-				logger->log_error("[Kafka Consumer] Deserialization failed for "
-				                  "message on topic: "
-				                  + topic);
-				return {};
-			}
-		} catch (const std::exception &e) {
-			logger->log_error("[Kafka Consumer] Failed to deserialize payload: "
-			                  + std::string(e.what()));
+
+		if (deserialize(msg->payload(), msg->len(), payload) == false) {
+			logger->log_error("[Kafka Consumer] Deserialization failed for "
+			                  "message on topic: "
+			                  + topic);
+			continue;
 		}
 
-		if (payload.message_id.find(TERMINATION_SIGNAL) != std::string::npos) {
-			terminated_streams.insert({broker_, topic});
-			logger->log_info("[Kafka Consumer] Received termination for topic: "
-			                 + topic);
-			logger->log_debug("[Kafka Consumer] Streams closed: "
-			                  + std::to_string(terminated_streams.size()) + "/"
-			                  + std::to_string(subscribed_streams.size()));
-			payload = Payload::make(
-			    payload.message_id.substr(0, payload.message_id.find(':')) + "-"
-			        + topic,
-			    0, 0, PayloadKind::TERMINATION);
-		}
 		logger->log_study("Reception," + payload.message_id + ","
 		                  + std::to_string(payload.data_size) + "," + topic
 		                  + "," + std::to_string(msg->len()));
-	} else {
-		logger->log_error("[Kafka Consumer] Unknown msg handling condition");
-	}
 
-	return payload;
+		if (payload.message_id.find(TERMINATION_SIGNAL) != std::string::npos) {
+			subscribed_streams.dec();
+
+			logger->log_info(
+			    "[Kafka Consumer] Received termination signal for topic: "
+			    + topic);
+
+			if (subscribed_streams.get() == 0) {
+				logger->log_info("[Kafka Consumer] All streams "
+				                 "terminated. Exiting.");
+				break;
+			}
+			logger->log_info("[Kafka Consumer] Remaining subscribed streams: "
+			                 + std::to_string(subscribed_streams.get()));
+		}
+	}
 }
 
 void KafkaCppConsumer::log_configuration() {
