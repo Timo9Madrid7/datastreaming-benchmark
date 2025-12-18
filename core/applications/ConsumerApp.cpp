@@ -61,7 +61,7 @@ void ConsumerApp::run() {
 
 	if (technology.value().find("p2p") == std::string::npos) {
 		// Give some time for the broker&producer to initialize
-		logger->log_info("[ConsumerApp] Wait" + std::to_string(sleep_time)
+		logger->log_info("[ConsumerApp] Wait " + std::to_string(sleep_time)
 		                 + "ms for initialization");
 		std::this_thread::sleep_for(std::chrono::milliseconds(sleep_time));
 	}

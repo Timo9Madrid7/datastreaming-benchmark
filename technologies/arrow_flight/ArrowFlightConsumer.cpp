@@ -7,11 +7,9 @@
 #include <arrow/result.h>
 #include <arrow/status.h>
 #include <arrow/type_fwd.h>
-#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -19,6 +17,7 @@
 #include <sys/types.h>
 #include <utility>
 
+#include "BS_thread_pool.hpp"
 #include "Logger.hpp"
 #include "Payload.hpp"
 #include "Utils.hpp"
@@ -27,30 +26,15 @@ ArrowFlightConsumer::ArrowFlightConsumer(std::shared_ptr<Logger> logger)
     : IConsumer(logger), consumer_(nullptr) {
 	// Set a timeout for receiving messages (10s)
 	call_options_.timeout = std::chrono::seconds(10);
-	num_threads_ = default_thread_pool_size();
 	logger->log_info("[Flight Consumer] ArrowFlightConsumer created.");
 }
 
 ArrowFlightConsumer::~ArrowFlightConsumer() {
-	stop_.store(true, std::memory_order_relaxed);
-	task_cv_.notify_all();
-	batch_cv_.notify_all();
-
-	for (auto &thread : thread_pool_) {
-		if (thread.joinable()) {
-			thread.join();
-		}
-	}
 	logger->log_debug("[Flight Consumer] Destructor finished");
 }
 
-inline size_t ArrowFlightConsumer::default_thread_pool_size() {
-	size_t num_threads = std::thread::hardware_concurrency() * 2;
-	return num_threads == 0 ? 2 : num_threads;
-}
-
 void ArrowFlightConsumer::initialize() {
-	logger->log_info("Initializing");
+	logger->log_study("Initializing");
 
 	const std::string vendpoint =
 	    utils::get_env_var_or_default("CONSUMER_ENDPOINT", "localhost");
@@ -96,13 +80,8 @@ void ArrowFlightConsumer::initialize() {
 	}
 	consumer_ = std::move(*client_res);
 
-	// Setup thread pool
-	thread_pool_.reserve(num_threads_);
-	for (size_t i = 0; i < num_threads_; ++i) {
-		thread_pool_.emplace_back([this]() { worker_loop_(); });
-	}
-	logger->log_debug("[Flight Consumer] Initialized thread pool with "
-	                  + std::to_string(num_threads_) + " threads.");
+	thread_pool_
+	    .pause(); // Pause the thread pool until all subscriptions are added
 
 	std::istringstream tickets(vTickets.value_or(""));
 	std::string ticket;
@@ -129,12 +108,7 @@ void ArrowFlightConsumer::subscribe(const std::string &ticket) {
 	logger->log_info("[Flight Consumer] Queued subscription for ticket: "
 	                 + ticket);
 	ticket_names_.push_back(ticket);
-	subscribed_streams.inc();
-	{
-		std::lock_guard<std::mutex> lock_guard(task_mutex_);
-		task_queue_.push(ticket);
-	}
-	task_cv_.notify_one();
+	thread_pool_.detach_task([ticket, this] { this->_do_get_(ticket); });
 }
 
 bool ArrowFlightConsumer::deserialize(const void *raw_message, size_t len,
@@ -145,88 +119,14 @@ bool ArrowFlightConsumer::deserialize(const void *raw_message, size_t len,
 }
 
 void ArrowFlightConsumer::start_loop() {
-	while (true) {
-		std::pair<std::string, std::shared_ptr<arrow::RecordBatch>> item;
-		{
-			std::unique_lock<std::mutex> lock(batch_mutex_);
-			batch_cv_.wait(lock, [this]() {
-				return stop_.load(std::memory_order_relaxed)
-				    || !batch_queue_.empty();
-			});
-
-			if (stop_.load(std::memory_order_relaxed)) {
-				break;
-			} else if (batch_queue_.empty()) {
-				continue;
-			}
-
-			item = std::move(batch_queue_.front());
-			batch_queue_.pop();
-		}
-
-		auto message_id_column = std::static_pointer_cast<arrow::StringArray>(
-		    item.second->column(0));
-		auto kind_column =
-		    std::static_pointer_cast<arrow::UInt8Array>(item.second->column(1));
-		auto data_column = std::static_pointer_cast<arrow::BinaryArray>(
-		    item.second->column(2));
-
-		for (int64_t i = 0; i < item.second->num_rows(); ++i) {
-			std::string message_id = message_id_column->GetString(i);
-			PayloadKind kind = static_cast<PayloadKind>(kind_column->Value(i));
-			size_t row_size = message_id_column->value_length(i)
-			    + sizeof(uint8_t) + data_column->value_length(i);
-			std::string_view data_view = data_column->GetView(i);
-			size_t data_size = data_view.size();
-
-			logger->log_study("Reception," + message_id + ","
-			                  + std::to_string(data_size) + ',' + item.first
-			                  + "," + std::to_string(data_size));
-
-			if (message_id.find(TERMINATION_SIGNAL) != std::string::npos) {
-				subscribed_streams.dec();
-
-				logger->log_info(
-				    "[Flight Consumer] Received termination signal for ticket: "
-				    + item.first);
-
-				if (subscribed_streams.get() == 0) {
-					logger->log_info("[Flight Consumer] All streams "
-					                 "terminated. Exiting.");
-					stop_.store(true, std::memory_order_relaxed);
-					task_cv_.notify_all();
-					batch_cv_.notify_all();
-					break;
-				}
-			}
-		}
-	}
+	thread_pool_.unpause();
+	thread_pool_.wait();
+	logger->log_info("[Kafka Consumer] Remaining subscribed streams: "
+	                 + std::to_string(subscribed_streams.get()));
 }
 
-void ArrowFlightConsumer::worker_loop_() {
-	while (stop_.load(std::memory_order_relaxed) == false) {
-		std::string ticket;
-		{
-			std::unique_lock<std::mutex> lock(task_mutex_);
-			task_cv_.wait(lock, [this]() {
-				return stop_.load(std::memory_order_relaxed)
-				    || !task_queue_.empty();
-			});
-
-			if (stop_.load(std::memory_order_relaxed) && task_queue_.empty()) {
-				return;
-			}
-
-			ticket = task_queue_.front();
-			task_queue_.pop();
-		}
-		do_get_(std::move(ticket));
-	}
-}
-
-void ArrowFlightConsumer::do_get_(std::string ticket) {
+void ArrowFlightConsumer::_do_get_(std::string ticket) {
 	logger->log_info("[Flight Consumer] Starting do_get for ticket: " + ticket);
-
 	arrow::flight::Ticket flight_ticket(ticket);
 
 	auto reader_res = consumer_->DoGet(call_options_, flight_ticket);
@@ -238,39 +138,61 @@ void ArrowFlightConsumer::do_get_(std::string ticket) {
 	std::unique_ptr<arrow::flight::FlightStreamReader> reader =
 	    std::move(*reader_res);
 
-	while (stop_.load(std::memory_order_relaxed) == false) {
+	while (true) {
 		auto result_chunk = reader->Next();
 
 		if (!result_chunk.ok()) {
-			logger->log_error("[Flight Consumer] Error reading batch: "
+			logger->log_error("[Flight Consumer] Error reading chunk for ticket: "
+			                  + ticket + ": "
 			                  + result_chunk.status().ToString());
-			break;
+			return;
 		}
 
 		auto chunk = std::move(result_chunk.ValueOrDie());
 		if (!chunk.data) {
-			logger->log_info("[Flight Consumer] No more data for ticket: "
-			                 + ticket);
-			break; // No more data
+			logger->log_info(
+			    "[Flight Consumer] End of stream reached for ticket: " + ticket);
+			return;
 		}
 
-		{
-			std::lock_guard<std::mutex> lock_guard(batch_mutex_);
-			batch_queue_.emplace(ticket, chunk.data);
-		}
+		auto batch = std::move(chunk.data);
 
-		batch_cv_.notify_one();
-		logger->log_info("[Flight Consumer] Received batch for ticket: "
-		                 + ticket);
+		auto message_id_column =
+		    std::static_pointer_cast<arrow::StringArray>(batch->column(0));
+		auto kind_column =
+		    std::static_pointer_cast<arrow::UInt8Array>(batch->column(1));
+		auto data_column =
+		    std::static_pointer_cast<arrow::BinaryArray>(batch->column(2));
+
+		for (int64_t i = 0; i < batch->num_rows(); ++i) {
+			std::string message_id = message_id_column->GetString(i);
+			PayloadKind kind = static_cast<PayloadKind>(kind_column->Value(i));
+			size_t row_size = message_id_column->value_length(i)
+			    + sizeof(uint8_t) + data_column->value_length(i);
+			std::string_view data_view = data_column->GetView(i);
+			size_t data_size = data_view.size();
+
+			logger->log_study("Reception," + message_id + ","
+			                  + std::to_string(data_size) + ',' + ticket + ","
+			                  + std::to_string(row_size));
+
+			if (message_id.find(TERMINATION_SIGNAL) != std::string::npos) {
+				logger->log_info(
+				    "[Flight Consumer] Received termination signal for ticket: "
+				    + ticket);
+
+				return;
+			}
+		}
 	}
 }
 
 void ArrowFlightConsumer::log_configuration() {
 	logger->log_config("[Flight Consumer] [CONFIG_BEGIN]");
 
-	logger->log_config("[CONFIG]  Endpoint=" + location_.ToString());
+	logger->log_config("[CONFIG] Endpoint=" + location_.ToString());
 	logger->log_config("[CONFIG] Number of threads="
-	                   + std::to_string(num_threads_));
+	                   + std::to_string(thread_pool_.get_thread_count()));
 	logger->log_config("[CONFIG] topics="
 	                   + utils::get_env_var_or_default("TOPICS", ""));
 	logger->log_config(
