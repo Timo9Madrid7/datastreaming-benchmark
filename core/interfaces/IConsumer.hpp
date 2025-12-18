@@ -36,10 +36,13 @@ class IConsumer {
 		}
 
 		void dec() {
-			if (value.load(std::memory_order_relaxed) == 0) {
-				return;
+			size_t cur = value.load(std::memory_order_relaxed);
+			while (cur > 0) {
+				if (value.compare_exchange_weak(cur, cur - 1,
+				                                std::memory_order_relaxed)) {
+					return;
+				}
 			}
-			value.fetch_sub(1, std::memory_order_relaxed);
 		}
 
 		size_t get() const {
