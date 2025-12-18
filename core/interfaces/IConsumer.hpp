@@ -1,19 +1,15 @@
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 #include <memory>
-#include <set>
 #include <string>
+#include <sys/types.h>
 
 #include "Logger.hpp"
 #include "Payload.hpp"
 
 class IConsumer {
-  protected:
-	std::shared_ptr<Logger> logger;
-	std::set<std::pair<std::string, std::string>> terminated_streams;
-	std::set<std::pair<std::string, std::string>> subscribed_streams;
-
   private:
 	/**
 	@brief Logs the configuration of the consumer.
@@ -29,6 +25,34 @@ class IConsumer {
 	*/
 	virtual bool deserialize(const void *raw_message, size_t len,
 	                         Payload &out) = 0;
+
+	/**
+	@brief A thread-safe counter for tracking the number of subscribed streams.
+	*/
+	class StreamCounter {
+	  public:
+		void inc() {
+			value.fetch_add(1, std::memory_order_relaxed);
+		}
+
+		void dec() {
+			if (value.load(std::memory_order_relaxed) == 0) {
+				return;
+			}
+			value.fetch_sub(1, std::memory_order_relaxed);
+		}
+
+		size_t get() const {
+			return value.load(std::memory_order_relaxed);
+		}
+
+	  private:
+		std::atomic<size_t> value{0};
+	};
+
+  protected:
+	std::shared_ptr<Logger> logger;
+	StreamCounter subscribed_streams;
 
   public:
 	IConsumer(std::shared_ptr<Logger> loggerp) {
@@ -49,24 +73,8 @@ class IConsumer {
 	virtual void subscribe(const std::string &topic) = 0;
 
 	/**
-	@brief Receives a message from the subscribed topics.
-	@return The received Payload object.
+	@brief Starts receiving messages from the subscribed topics until all
+	streams have been terminated.
 	*/
-	virtual Payload receive_message() = 0;
-
-	/**
-	@brief Gets the number of subscribed streams.
-	@return The number of subscribed streams.
-	*/
-	int get_subscribed_streams_size() const {
-		return static_cast<int>(subscribed_streams.size());
-	}
-
-	/**
-	@brief Gets the number of terminated streams.
-	@return The number of terminated streams.
-	*/
-	int get_terminated_streams_size() const {
-		return static_cast<int>(terminated_streams.size());
-	}
+	virtual void start_loop() = 0;
 };

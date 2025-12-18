@@ -1,7 +1,6 @@
 #ifndef ZEROMQP2P_CONSUMER_HPP
 #define ZEROMQP2P_CONSUMER_HPP
 
-#include <set>
 #include <string>
 #include <zmq.hpp>
 
@@ -12,7 +11,6 @@ class ZeroMQP2PConsumer : public IConsumer {
   private:
 	zmq::context_t context;
 	zmq::socket_t subscriber;
-	std::set<std::string> unique_publishers;
 
   public:
 	ZeroMQP2PConsumer(std::shared_ptr<Logger> logger);
@@ -20,7 +18,7 @@ class ZeroMQP2PConsumer : public IConsumer {
 
 	void initialize() override;
 	void subscribe(const std::string &topic) override;
-	Payload receive_message() override;
+	void start_loop() override;
 	bool deserialize(const void *raw_message, size_t len,
 	                 Payload &out) override;
 
