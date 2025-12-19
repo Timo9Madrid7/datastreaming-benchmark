@@ -2,7 +2,6 @@
 
 #include <memory>
 #include <string>
-#include <vector>
 
 #include "Logger.hpp"
 #include "Payload.hpp"
@@ -14,11 +13,11 @@ class IPublisher {
   private:
 	/**
 	@brief Serializes a vector of Payload objects into a raw message.
-	@param messages The vector of Payload objects to serialize.
+	@param message The Payload object to serialize.
 	@param out The output buffer to store the serialized message.
 	@return True if serialization was successful, false otherwise.
 	*/
-	virtual bool serialize(const std::vector<Payload> &messages, void *out) = 0;
+	virtual bool serialize(const Payload &message, void *out) = 0;
 
 	/**
 	@brief Logs the configuration of the publisher.
@@ -40,5 +39,5 @@ class IPublisher {
 	@brief Sends a message to a specific topic.
 	@param message The Payload object to send.
 	*/
-	virtual void send_message(const Payload &message, std::string& topic) = 0;
+	virtual void send_message(const Payload &message, std::string &topic) = 0;
 };

@@ -4,8 +4,9 @@
 #include <cstdlib>
 #include <string>
 
-bool ZeroMQP2PPublisher::serialize(const std::vector<Payload> &messages,
-                                   void *out) {
+#include "Payload.hpp"
+
+bool ZeroMQP2PPublisher::serialize(const Payload &messages, void *out) {
 	logger->log_error("[ZeroMQP2P Publisher] serialize called without topic. "
 	                  "This should not happen.");
 	return false;
@@ -89,7 +90,7 @@ void ZeroMQP2PPublisher::initialize() {
 }
 
 void ZeroMQP2PPublisher::send_message(const Payload &message,
-                                      std::string& topic) {
+                                      std::string &topic) {
 	logger->log_study("Intention," + message.message_id + ","
 	                  + std::to_string(message.data_size) + "," + topic);
 	try {

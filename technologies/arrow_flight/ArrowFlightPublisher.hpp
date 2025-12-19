@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "IPublisher.hpp"
+#include "Payload.hpp"
 
 class ArrowFlightPublisher : public IPublisher {
   public:
@@ -28,8 +29,8 @@ class ArrowFlightPublisher : public IPublisher {
 	~ArrowFlightPublisher() override;
 
 	void initialize() override;
-	bool serialize(const std::vector<Payload> &messages, void *out) override;
-	void send_message(const Payload &message, std::string& ticket) override;
+	bool serialize(const Payload &message, void *out) override;
+	void send_message(const Payload &message, std::string &ticket) override;
 	void log_configuration() override;
 
   private:
@@ -91,5 +92,5 @@ class ArrowFlightPublisher : public IPublisher {
 	arrow::flight::Location location_;
 	std::unique_ptr<arrow::flight::FlightClient> publisher_;
 
-	bool _do_put_(const std::string& ticket, BatchBuilder &batch_builder);
+	bool _do_put_(const std::string &ticket, BatchBuilder &batch_builder);
 };

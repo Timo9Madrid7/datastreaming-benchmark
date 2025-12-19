@@ -116,10 +116,7 @@ void KafkaPublisher::initialize() {
 	log_configuration();
 }
 
-bool KafkaPublisher::serialize(const std::vector<Payload> &messages,
-                               void *out) {
-	const Payload &message = messages[0];
-
+bool KafkaPublisher::serialize(const Payload &message, void *out) {
 	char *ptr = static_cast<char *>(out);
 
 	// Message ID Length
@@ -149,7 +146,7 @@ bool KafkaPublisher::serialize(const std::vector<Payload> &messages,
 	return true;
 }
 
-void KafkaPublisher::send_message(const Payload &message, std::string& topic) {
+void KafkaPublisher::send_message(const Payload &message, std::string &topic) {
 	logger->log_study("Intention," + message.message_id + ","
 	                  + std::to_string(message.data_size) + "," + topic);
 
@@ -159,7 +156,7 @@ void KafkaPublisher::send_message(const Payload &message, std::string& topic) {
 	    + sizeof(size_t)                            // Data size
 	    + message.data_size;                        // Data
 	std::string serialized(serialized_size, '\0');
-	if (serialize({message}, serialized.data()) == false) {
+	if (serialize(message, serialized.data()) == false) {
 		logger->log_error(
 		    "[Kafka Publisher] Serialization failed for message ID: "
 		    + message.message_id);

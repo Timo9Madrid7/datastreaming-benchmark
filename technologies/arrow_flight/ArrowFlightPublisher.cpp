@@ -10,6 +10,7 @@
 #include <utility>
 
 #include "Logger.hpp"
+#include "Payload.hpp"
 #include "Utils.hpp"
 
 const std::shared_ptr<arrow::Schema> ArrowFlightPublisher::schema_ =
@@ -102,49 +103,45 @@ void ArrowFlightPublisher::initialize() {
 	log_configuration();
 }
 
-bool ArrowFlightPublisher::serialize(const std::vector<Payload> &messages,
-                                     void *out) {
+bool ArrowFlightPublisher::serialize(const Payload &message, void *out) {
 	BatchBuilder *builder = static_cast<BatchBuilder *>(out);
 
-	for (const Payload &message : messages) {
-		arrow::Status status;
-		status = builder->message_id_builder.Append(message.message_id);
-		if (!status.ok()) {
-			logger->log_error("[Flight Publisher] Failed to append message ID: "
-			                  + status.ToString());
-			return false;
-		}
-		status =
-		    builder->kind_builder.Append(static_cast<uint8_t>(message.kind));
-		if (!status.ok()) {
-			logger->log_error("[Flight Publisher] Failed to append kind: "
-			                  + status.ToString());
-			return false;
-		}
-		status = builder->data_builder.Append(
-		    message.data.data(), static_cast<size_t>(message.data_size));
-		if (!status.ok()) {
-			logger->log_error("[Flight Publisher] Failed to append data: "
-			                  + status.ToString());
-			return false;
-		}
-
-		builder->rows += 1;
-		builder->byte_size +=
-		    message.message_id.size() + sizeof(uint8_t) + message.data_size;
+	arrow::Status status;
+	status = builder->message_id_builder.Append(message.message_id);
+	if (!status.ok()) {
+		logger->log_error("[Flight Publisher] Failed to append message ID: "
+		                  + status.ToString());
+		return false;
 	}
+	status = builder->kind_builder.Append(static_cast<uint8_t>(message.kind));
+	if (!status.ok()) {
+		logger->log_error("[Flight Publisher] Failed to append kind: "
+		                  + status.ToString());
+		return false;
+	}
+	status = builder->data_builder.Append(
+	    message.data.data(), static_cast<size_t>(message.data_size));
+	if (!status.ok()) {
+		logger->log_error("[Flight Publisher] Failed to append data: "
+		                  + status.ToString());
+		return false;
+	}
+
+	builder->rows += 1;
+	builder->byte_size +=
+	    message.message_id.size() + sizeof(uint8_t) + message.data_size;
 
 	return true;
 }
 
 void ArrowFlightPublisher::send_message(const Payload &message,
-                                        std::string& ticket) {
+                                        std::string &ticket) {
 	logger->log_study("Intention," + message.message_id + ","
 	                  + std::to_string(message.data_size) + "," + ticket);
 
 	BatchBuilder &batch_builder = ticket_batch_builders_[ticket];
 
-	if (!serialize({message}, &batch_builder)) {
+	if (!serialize(message, &batch_builder)) {
 		logger->log_error(
 		    "[Flight Publisher] Serialization failed for message ID: "
 		    + message.message_id);
@@ -185,12 +182,16 @@ bool ArrowFlightPublisher::_do_put_(const std::string &ticket,
 	}
 
 	// Diagnose schema mismatch early (local)
-    if (!batch->schema()->Equals(*schema_, /*check_metadata=*/true)) {
-        logger->log_error("[Flight Publisher] Schema mismatch BEFORE DoPut for ticket: " + ticket);
-        logger->log_error("[Flight Publisher] schema_      = " + schema_->ToString());
-        logger->log_error("[Flight Publisher] batch schema = " + batch->schema()->ToString());
-        return false;
-    }
+	if (!batch->schema()->Equals(*schema_, /*check_metadata=*/true)) {
+		logger->log_error(
+		    "[Flight Publisher] Schema mismatch BEFORE DoPut for ticket: "
+		    + ticket);
+		logger->log_error("[Flight Publisher] schema_      = "
+		                  + schema_->ToString());
+		logger->log_error("[Flight Publisher] batch schema = "
+		                  + batch->schema()->ToString());
+		return false;
+	}
 
 	arrow::flight::FlightDescriptor descriptor =
 	    arrow::flight::FlightDescriptor::Path({ticket});

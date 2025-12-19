@@ -9,6 +9,7 @@
 #include <string>
 
 #include "KafkaCallbacks.hpp"
+#include "Payload.hpp"
 #include "Utils.hpp"
 
 KafkaCppPublisher::KafkaCppPublisher(std::shared_ptr<Logger> logger) try
@@ -89,15 +90,7 @@ void KafkaCppPublisher::initialize() {
 	log_configuration();
 }
 
-bool KafkaCppPublisher::serialize(const std::vector<Payload> &messages,
-                                  void *out) {
-	if (messages.size() != 1) {
-		logger->log_error("[Kafka Publisher] Serialization supports only "
-		                  "single message at a time.");
-		return false;
-	}
-	const Payload &message = messages[0];
-
+bool KafkaCppPublisher::serialize(const Payload &message, void *out) {
 	char *ptr = static_cast<char *>(out);
 
 	// Message ID Length
@@ -126,7 +119,7 @@ bool KafkaCppPublisher::serialize(const std::vector<Payload> &messages,
 }
 
 void KafkaCppPublisher::send_message(const Payload &message,
-                                     std::string& topic) {
+                                     std::string &topic) {
 	logger->log_study("Intention," + message.message_id + ","
 	                  + std::to_string(message.data_size) + "," + topic);
 

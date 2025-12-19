@@ -6,7 +6,7 @@
 
 #include "IPublisher.hpp"
 #include "Logger.hpp"
-
+#include "Payload.hpp"
 
 class ZeroMQP2PPublisher : public IPublisher {
   private:
@@ -16,8 +16,8 @@ class ZeroMQP2PPublisher : public IPublisher {
 	std::string endpoint;
 
   private:
-	bool serialize(const std::vector<Payload> &messages, void *out) override;
-	bool serialize(const Payload& message, std::string topic, void* out);
+	bool serialize(const Payload &message, void *out) override;
+	bool serialize(const Payload &message, std::string topic, void *out);
 
 	void log_configuration() override;
 
@@ -26,7 +26,7 @@ class ZeroMQP2PPublisher : public IPublisher {
 	~ZeroMQP2PPublisher();
 
 	void initialize() override;
-	void send_message(const Payload &message, std::string& topic) override;
+	void send_message(const Payload &message, std::string &topic) override;
 };
 
 #endif // ZEROMQ_PUBLISHER_HPP
