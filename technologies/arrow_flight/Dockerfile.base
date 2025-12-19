@@ -1,0 +1,22 @@
+# Expected name: arrow_flight_base
+# Arrow Flight C++ Base Dockerfile
+FROM core_base
+
+# Install Arrow-Flight-specific dependencies
+RUN apt-get update \
+    && apt-get install -y -V ca-certificates lsb-release wget \
+    && wget https://packages.apache.org/artifactory/arrow/$(lsb_release --id --short | tr 'A-Z' 'a-z')/apache-arrow-apt-source-latest-$(lsb_release --codename --short).deb \
+    && apt install -y -V ./apache-arrow-apt-source-latest-$(lsb_release --codename --short).deb \
+    && apt-get update \
+    && apt-get install -y -V libarrow-dev libarrow-flight-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /app/technologies
+RUN mkdir -p /app/technologies/arrow_flight
+COPY ./technologies/arrow_flight /app/technologies/arrow_flight
+
+# Build the arrow-flight-specific library
+RUN cd /app/build && cmake .. && cmake --build .
+
+# Move shared lib into /app/lib
+RUN mkdir -p /app/lib && cp /app/build/technologies/arrow_flight/libarrow_flight_technology.so /app/lib/

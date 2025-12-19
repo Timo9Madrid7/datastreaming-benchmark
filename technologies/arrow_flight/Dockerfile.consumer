@@ -1,0 +1,9 @@
+# Arrow Flight C++ Consumer Dockerfile
+FROM arrow_flight_base
+
+# Set working directory
+WORKDIR /app/build/core/applications
+
+# Run the consumer app
+ENTRYPOINT ["./ConsumerApp"]
+CMD [ "INFO", "DEBUG", "STUDY", "ERROR" ]
