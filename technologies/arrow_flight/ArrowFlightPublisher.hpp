@@ -29,7 +29,7 @@ class ArrowFlightPublisher : public IPublisher {
 
 	void initialize() override;
 	bool serialize(const std::vector<Payload> &messages, void *out) override;
-	void send_message(const Payload &message, std::string ticket) override;
+	void send_message(const Payload &message, std::string& ticket) override;
 	void log_configuration() override;
 
   private:

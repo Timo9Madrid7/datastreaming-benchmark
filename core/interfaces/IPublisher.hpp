@@ -40,5 +40,5 @@ class IPublisher {
 	@brief Sends a message to a specific topic.
 	@param message The Payload object to send.
 	*/
-	virtual void send_message(const Payload &message, std::string topic) = 0;
+	virtual void send_message(const Payload &message, std::string& topic) = 0;
 };

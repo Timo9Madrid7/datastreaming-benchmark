@@ -26,7 +26,7 @@ class ZeroMQP2PPublisher : public IPublisher {
 	~ZeroMQP2PPublisher();
 
 	void initialize() override;
-	void send_message(const Payload &message, std::string topic) override;
+	void send_message(const Payload &message, std::string& topic) override;
 };
 
 #endif // ZEROMQ_PUBLISHER_HPP

@@ -138,7 +138,7 @@ bool ArrowFlightPublisher::serialize(const std::vector<Payload> &messages,
 }
 
 void ArrowFlightPublisher::send_message(const Payload &message,
-                                        std::string ticket) {
+                                        std::string& ticket) {
 	logger->log_study("Intention," + message.message_id + ","
 	                  + std::to_string(message.data_size) + "," + ticket);
 

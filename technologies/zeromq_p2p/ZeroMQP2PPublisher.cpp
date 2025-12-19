@@ -89,7 +89,7 @@ void ZeroMQP2PPublisher::initialize() {
 }
 
 void ZeroMQP2PPublisher::send_message(const Payload &message,
-                                      std::string topic) {
+                                      std::string& topic) {
 	logger->log_study("Intention," + message.message_id + ","
 	                  + std::to_string(message.data_size) + "," + topic);
 	try {

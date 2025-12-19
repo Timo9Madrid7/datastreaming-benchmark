@@ -149,7 +149,7 @@ bool KafkaPublisher::serialize(const std::vector<Payload> &messages,
 	return true;
 }
 
-void KafkaPublisher::send_message(const Payload &message, std::string topic) {
+void KafkaPublisher::send_message(const Payload &message, std::string& topic) {
 	logger->log_study("Intention," + message.message_id + ","
 	                  + std::to_string(message.data_size) + "," + topic);
 

@@ -12,7 +12,7 @@ class KafkaCppPublisher : public IPublisher {
 	~KafkaCppPublisher() override;
 
 	void initialize() override;
-	void send_message(const Payload &message, std::string topic) override;
+	void send_message(const Payload &message, std::string& topic) override;
 
   private:
 	bool serialize(const std::vector<Payload> &messages, void *out) override;
