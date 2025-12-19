@@ -9,6 +9,7 @@
 #include <arrow/type_fwd.h>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <sstream>
