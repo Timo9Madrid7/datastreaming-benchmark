@@ -70,13 +70,14 @@ void KafkaCppPublisher::initialize() {
 		throw std::runtime_error("Failed to set bootstrap.servers: " + errstr);
 	}
 
-	// TODO [optimization] Enable message batching
-	conf_->set("linger.ms", "5", errstr);
+	// Throughput Optimizations
+	conf_->set("acks", "1", errstr);
+	conf_->set("linger.ms", "100", errstr);
+	conf_->set("batch.size", "1048576", errstr);
 	conf_->set("batch.num.messages", "65536", errstr);
 	conf_->set("compression.type", "lz4", errstr);
-	// TODO [Optimization] Increase buffer memory
-	conf_->set("queue.buffering.max.kbytes", "1048576", errstr);
 	conf_->set("queue.buffering.max.messages", "1000000", errstr);
+	conf_->set("queue.buffering.max.kbytes", "1048576", errstr);
 
 	producer_.reset(RdKafka::Producer::create(conf_.get(), errstr));
 
