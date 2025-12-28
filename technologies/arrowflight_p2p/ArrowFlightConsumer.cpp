@@ -15,6 +15,7 @@
 #include <stdint.h>
 #include <string>
 #include <string_view>
+#include <strstream>
 #include <thread>
 #include <unordered_set>
 #include <utility>
@@ -146,7 +147,16 @@ void ArrowFlightConsumer::initialize() {
 		throw std::runtime_error(err_msg);
 	}
 
-	auto loc_res = arrow::flight::Location::ForGrpcTcp(vendpoint, port);
+	std::istringstream endpoints(vendpoint);
+	std::string endpoint;
+	std::getline(endpoints, endpoint, ',');
+	if (endpoint.empty()) {
+		err_msg = "[Flight Consumer] Empty endpoint provided.";
+		logger->log_error(err_msg);
+		throw std::runtime_error(err_msg);
+	}
+
+	auto loc_res = arrow::flight::Location::ForGrpcTcp(endpoint, port);
 	if (!loc_res.ok()) {
 		logger->log_error("[Flight Consumer] ForGrpcTcp failed: "
 		                  + loc_res.status().ToString());
