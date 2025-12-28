@@ -2,18 +2,36 @@
 
 #include <arrow/flight/api.h>
 #include <arrow/flight/client.h>
+#include <arrow/flight/server.h>
 #include <arrow/flight/types.h>
 #include <arrow/record_batch.h>
+#include <arrow/status.h>
 #include <memory>
 #include <string>
 #include <vector>
 
-#include "BS_thread_pool.hpp"
 #include "IConsumer.hpp"
+#include "Logger.hpp"
 
 struct Payload;
 
-class ArrowFlightConsumer : public IConsumer {
+class ArrowFlightConsumer
+    : public IConsumer,
+      public std::enable_shared_from_this<ArrowFlightConsumer> {
+	class FlightServerLight : public arrow::flight::FlightServerBase {
+		arrow::Status
+		DoPut(const arrow::flight::ServerCallContext &context,
+		      std::unique_ptr<arrow::flight::FlightMessageReader> reader,
+		      std::unique_ptr<arrow::flight::FlightMetadataWriter> writer)
+		    override;
+
+		std::weak_ptr<ArrowFlightConsumer> consumer_;
+
+	  public:
+		explicit FlightServerLight(std::weak_ptr<ArrowFlightConsumer> consumer);
+		~FlightServerLight() override = default;
+	};
+
   public:
 	ArrowFlightConsumer(std::shared_ptr<Logger> logger);
 	~ArrowFlightConsumer() override;
@@ -28,11 +46,6 @@ class ArrowFlightConsumer : public IConsumer {
   private:
 	arrow::flight::Location location_;      // similar to broker
 	std::vector<std::string> ticket_names_; // similar to topic names
-	arrow::flight::FlightCallOptions call_options_;
 
-	std::unique_ptr<arrow::flight::FlightClient> consumer_;
-
-	BS::thread_pool<BS::tp::pause> thread_pool_{8}; // default to 8 threads
-
-	void _do_get_(std::string ticket);
+	std::unique_ptr<FlightServerLight> server_;
 };

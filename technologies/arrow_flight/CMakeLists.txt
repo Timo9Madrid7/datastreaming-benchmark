@@ -12,7 +12,6 @@ find_package(ArrowFlight REQUIRED)
 
 target_include_directories(arrow_flight_technology PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_SOURCE_DIR}/third_party_libs/
 )
 
 target_link_libraries(arrow_flight_technology PRIVATE
