@@ -1,13 +1,17 @@
 #include "ArrowFlightPublisher.hpp"
 
-#include <arrow/array/array_base.h>
 #include <arrow/flight/client.h>
+#include <arrow/result.h>
+#include <arrow/type.h>
 #include <arrow/type_fwd.h>
-#include <cstddef>
+#include <cstdlib>
+#include <exception>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "Logger.hpp"
 #include "Payload.hpp"

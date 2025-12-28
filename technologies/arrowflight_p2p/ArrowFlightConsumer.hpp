@@ -6,6 +6,7 @@
 #include <arrow/flight/types.h>
 #include <arrow/record_batch.h>
 #include <arrow/status.h>
+#include <atomic>
 #include <memory>
 #include <string>
 #include <vector>
@@ -25,10 +26,10 @@ class ArrowFlightConsumer
 		      std::unique_ptr<arrow::flight::FlightMetadataWriter> writer)
 		    override;
 
-		std::weak_ptr<ArrowFlightConsumer> consumer_;
+		ArrowFlightConsumer *consumer_ = nullptr;
 
 	  public:
-		explicit FlightServerLight(std::weak_ptr<ArrowFlightConsumer> consumer);
+		explicit FlightServerLight(ArrowFlightConsumer *consumer);
 		~FlightServerLight() override = default;
 	};
 
@@ -48,4 +49,6 @@ class ArrowFlightConsumer
 	std::vector<std::string> ticket_names_; // similar to topic names
 
 	std::unique_ptr<FlightServerLight> server_;
+
+	std::atomic_bool shutdown_requested_{false};
 };

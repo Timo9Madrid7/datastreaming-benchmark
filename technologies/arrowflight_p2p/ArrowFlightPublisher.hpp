@@ -1,24 +1,15 @@
 #pragma once
 
-#include <arrow/api.h>
 #include <arrow/array/builder_binary.h>
-#include <arrow/flight/api.h>
-#include <arrow/flight/client.h>
-#include <arrow/flight/server.h>
+#include <arrow/array/builder_primitive.h>
 #include <arrow/flight/types.h>
 #include <arrow/record_batch.h>
-#include <arrow/result.h>
 #include <arrow/status.h>
-#include <arrow/type.h>
-#include <arrow/type_fwd.h>
-#include <arrow/util/byte_size.h>
 #include <cstdint>
-#include <cstdlib>
 #include <deque>
 #include <memory>
 #include <string>
 #include <unordered_map>
-#include <vector>
 
 #include "IPublisher.hpp"
 #include "Payload.hpp"

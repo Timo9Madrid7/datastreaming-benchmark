@@ -1,19 +1,21 @@
 #include "ArrowFlightConsumer.hpp"
 
-#include <arrow/api.h>
-#include <arrow/flight/api.h>
-#include <arrow/flight/client.h>
+#include <arrow/array/array_binary.h>
+#include <arrow/array/array_primitive.h>
 #include <arrow/flight/server.h>
 #include <arrow/flight/types.h>
+#include <arrow/record_batch.h>
 #include <arrow/result.h>
 #include <arrow/status.h>
-#include <arrow/type_fwd.h>
 #include <cstddef>
 #include <memory>
 #include <optional>
 #include <sstream>
+#include <stdexcept>
+#include <stdint.h>
 #include <string>
-#include <sys/types.h>
+#include <string_view>
+#include <thread>
 #include <unordered_set>
 #include <utility>
 
@@ -21,15 +23,21 @@
 #include "Payload.hpp"
 #include "Utils.hpp"
 
+ArrowFlightConsumer::FlightServerLight::FlightServerLight(
+    ArrowFlightConsumer *consumer)
+    : consumer_(consumer) {
+}
+
 arrow::Status ArrowFlightConsumer::FlightServerLight::DoPut(
     const arrow::flight::ServerCallContext &context,
     std::unique_ptr<arrow::flight::FlightMessageReader> reader,
     std::unique_ptr<arrow::flight::FlightMetadataWriter> writer) {
 
-	auto consumer = consumer_.lock();
+	consumer_->logger->log_info("[Flight Consumer] DoPut called by client: "
+	                            + context.peer_identity());
 
 	if (reader->descriptor().path.empty()) {
-		consumer->logger->log_error(
+		consumer_->logger->log_error(
 		    "[Flight Consumer] Received DoPut with empty ticket!");
 		return arrow::Status::Invalid("Empty ticket in DoPut");
 	}
@@ -57,46 +65,47 @@ arrow::Status ArrowFlightConsumer::FlightServerLight::DoPut(
 			std::string_view data_view = data_column->GetView(i);
 			size_t data_size = data_view.size();
 
-			consumer->logger->log_study(
+			consumer_->logger->log_study(
 			    "Reception," + message_id + "," + std::to_string(data_size)
 			    + ',' + ticket + "," + std::to_string(row_size));
 
 			if (message_id.find(TERMINATION_SIGNAL) != std::string::npos) {
-				consumer->subscribed_streams.dec();
-				consumer->logger->log_info(
+				consumer_->subscribed_streams.dec();
+				consumer_->logger->log_info(
 				    "[Flight Consumer] Received termination signal for ticket: "
 				    + ticket);
 
-				if (consumer->subscribed_streams.get() == 0) {
-					consumer->logger->log_info(
-					    "[Flight Consumer] All streams terminated, shutting "
-					    "down server.");
-					// Shutdown the server gracefully
-					arrow::Status shutdown_status =
-					    consumer->server_->Shutdown();
-					if (!shutdown_status.ok()) {
-						consumer->logger->log_error(
-						    "[Flight Consumer] Server shutdown failed: "
-						    + shutdown_status.ToString());
-						return shutdown_status;
+				if (consumer_->subscribed_streams.get() == 0) {
+					bool expected = false;
+					if (consumer_->shutdown_requested_.compare_exchange_strong(
+					        expected, true)) {
+						consumer_->logger->log_info(
+						    "[Flight Consumer] All streams terminated, "
+						    "shutting down server.");
+
+						// Shutdown the server asynchronously to avoid deadlock
+						std::thread([srv = consumer_->server_.get(),
+						             log = consumer_->logger]() {
+							auto st =
+							    srv ? srv->Shutdown() : arrow::Status::OK();
+							if (!st.ok())
+								log->log_error(
+								    "[Flight Consumer] Server shutdown failed: "
+								    + st.ToString());
+						}).detach();
 					}
 				}
 
-				consumer->logger->log_info(
+				consumer_->logger->log_info(
 				    "[Flight Consumer] Remaining streams: "
-				    + std::to_string(consumer->subscribed_streams.get()));
+				    + std::to_string(consumer_->subscribed_streams.get()));
 
-				break;
+				return arrow::Status::OK();
 			}
 		}
 	}
 
 	return arrow::Status::OK();
-}
-
-ArrowFlightConsumer::FlightServerLight::FlightServerLight(
-    std::weak_ptr<ArrowFlightConsumer> consumer)
-    : consumer_(consumer) {
 }
 
 ArrowFlightConsumer::ArrowFlightConsumer(std::shared_ptr<Logger> logger)
@@ -147,7 +156,7 @@ void ArrowFlightConsumer::initialize() {
 	location_ = *loc_res;
 
 	arrow::flight::FlightServerOptions options(location_);
-	server_ = std::make_unique<FlightServerLight>(weak_from_this());
+	server_ = std::make_unique<FlightServerLight>(this);
 	auto status = server_->Init(options);
 	if (!status.ok()) {
 		logger->log_error(

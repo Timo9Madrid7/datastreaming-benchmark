@@ -1,5 +1,5 @@
 # Arrow Flight C++ Consumer Dockerfile
-FROM arrow_flight_base
+FROM arrowflight_p2p_base
 
 # Set working directory
 WORKDIR /app/build/core/applications
