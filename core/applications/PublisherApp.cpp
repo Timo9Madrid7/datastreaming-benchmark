@@ -193,7 +193,7 @@ void PublisherApp::run() {
 
 	if (technology.value().find("p2p") != std::string::npos) {
 		// Give some time for P2P connections to establish
-		logger->log_info("[PublisherApp] Wait" + std::to_string(sleep_time)
+		logger->log_info("[PublisherApp] Wait " + std::to_string(sleep_time)
 		                 + "ms for initialization");
 		std::this_thread::sleep_for(std::chrono::milliseconds(sleep_time));
 	}
