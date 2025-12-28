@@ -2,12 +2,16 @@
 
 #include <arrow/array/builder_binary.h>
 #include <arrow/array/builder_primitive.h>
+#include <arrow/flight/server.h>
 #include <arrow/flight/types.h>
 #include <arrow/record_batch.h>
 #include <arrow/status.h>
+#include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <deque>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 
@@ -23,6 +27,13 @@ class ArrowFlightPublisher : public IPublisher {
 	bool serialize(const Payload &message, void *out) override;
 	void send_message(const Payload &message, std::string &ticket) override;
 	void log_configuration() override;
+
+	struct StreamState {
+		std::mutex m;
+		std::condition_variable cv;
+		std::deque<std::shared_ptr<arrow::RecordBatch>> q;
+		bool finished = false; // Set to true when receiving termination signal
+	};
 
   private:
 	const static std::shared_ptr<arrow::Schema> schema_;
@@ -77,11 +88,39 @@ class ArrowFlightPublisher : public IPublisher {
 		}
 	};
 
+	class FlightServerLight : public arrow::flight::FlightServerBase {
+	  public:
+		explicit FlightServerLight(ArrowFlightPublisher *publisher)
+		    : publisher_(publisher) {
+		}
+		~FlightServerLight() override = default;
+
+		arrow::Status DoGet(
+		    const arrow::flight::ServerCallContext &context,
+		    const arrow::flight::Ticket &request,
+		    std::unique_ptr<arrow::flight::FlightDataStream> *stream) override;
+
+	  private:
+		ArrowFlightPublisher *publisher_;
+	};
+
+	// batching
 	std::unordered_map<std::string, BatchBuilder> ticket_batch_builders_;
 	uint64_t MAX_BATCH_BYTES;
 
+	// server
 	arrow::flight::Location location_;
-	std::unique_ptr<arrow::flight::FlightClient> publisher_;
+	std::unique_ptr<FlightServerLight> server_;
+	std::thread server_thread_;
+	std::atomic_bool server_started_{false};
 
-	bool _do_put_(const std::string &ticket, BatchBuilder &batch_builder);
+	// tickect -> queue
+	std::mutex streams_mu_;
+	std::unordered_map<std::string, std::shared_ptr<StreamState>> streams_;
+
+	std::shared_ptr<StreamState>
+	get_or_create_stream_(const std::string &ticket);
+	void enqueue_batch_(const std::string &ticket,
+	                    const std::shared_ptr<arrow::RecordBatch> &batch,
+	                    bool is_termination);
 };

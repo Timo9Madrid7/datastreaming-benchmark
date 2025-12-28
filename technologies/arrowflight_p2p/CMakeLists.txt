@@ -12,6 +12,7 @@ find_package(ArrowFlight REQUIRED)
 
 target_include_directories(arrowflight_p2p_technology PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/third_party_libs/
 )
 
 target_link_libraries(arrowflight_p2p_technology PRIVATE

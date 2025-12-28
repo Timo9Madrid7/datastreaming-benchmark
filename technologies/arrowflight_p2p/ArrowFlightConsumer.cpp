@@ -15,7 +15,6 @@
 #include <stdint.h>
 #include <string>
 #include <string_view>
-#include <thread>
 #include <unordered_set>
 #include <utility>
 
@@ -23,30 +22,132 @@
 #include "Payload.hpp"
 #include "Utils.hpp"
 
-ArrowFlightConsumer::FlightServerLight::FlightServerLight(
-    ArrowFlightConsumer *consumer)
-    : consumer_(consumer) {
+ArrowFlightConsumer::ArrowFlightConsumer(std::shared_ptr<Logger> logger)
+    : IConsumer(logger) {
+	this->logger->log_info("[Flight Consumer] ArrowFlightConsumer created.");
 }
 
-arrow::Status ArrowFlightConsumer::FlightServerLight::DoPut(
-    const arrow::flight::ServerCallContext &context,
-    std::unique_ptr<arrow::flight::FlightMessageReader> reader,
-    std::unique_ptr<arrow::flight::FlightMetadataWriter> writer) {
+ArrowFlightConsumer::~ArrowFlightConsumer() {
+	thread_pool_.wait();
+	logger->log_debug("[Flight Consumer] Destructor finished");
+}
 
-	consumer_->logger->log_info("[Flight Consumer] DoPut called by client: "
-	                            + context.peer_identity());
+void ArrowFlightConsumer::initialize() {
+	logger->log_study("Initializing");
 
-	if (reader->descriptor().path.empty()) {
-		consumer_->logger->log_error(
-		    "[Flight Consumer] Received DoPut with empty ticket!");
-		return arrow::Status::Invalid("Empty ticket in DoPut");
+	const std::string vendpoints = utils::get_env_var_or_default(
+	    "PUBLISHER_ENDPOINTS",
+	    utils::get_env_var_or_default("CONSUMER_ENDPOINT", "localhost"));
+
+	const std::string port_str = utils::get_env_var_or_default(
+	    "PUBLISHER_PORT",
+	    utils::get_env_var_or_default("CONSUMER_PORT", "8815"));
+
+	const std::optional<std::string> vTickets = utils::get_env_var("TOPICS");
+	if (!vTickets || vTickets->empty()) {
+		throw std::runtime_error(
+		    "[Flight Consumer] Missing required environment variable TOPICS.");
 	}
-	std::string ticket = reader->descriptor().path[0];
+
+	try {
+		publisher_port_ = std::stoi(port_str);
+	} catch (...) {
+		throw std::runtime_error("[Flight Consumer] Invalid port: " + port_str);
+	}
+
+	// parse publishers endpoints
+	publisher_endpoints_.clear();
+	{
+		std::istringstream ss(vendpoints);
+		std::string ep;
+		while (std::getline(ss, ep, ',')) {
+			if (!ep.empty())
+				publisher_endpoints_.push_back(ep);
+		}
+	}
+	if (publisher_endpoints_.empty()) {
+		throw std::runtime_error(
+		    "[Flight Consumer] No publisher endpoints provided.");
+	}
+
+	// parse + dedupe tickets
+	ticket_names_.clear();
+	{
+		std::istringstream tickets(vTickets.value());
+		std::string ticket;
+		std::unordered_set<std::string> uniq;
+		while (std::getline(tickets, ticket, ',')) {
+			if (!ticket.empty() && uniq.insert(ticket).second) {
+				subscribe(ticket);
+			}
+		}
+	}
+	if (ticket_names_.empty()) {
+		throw std::runtime_error(
+		    "[Flight Consumer] No tickets provided in TOPICS.");
+	}
+
+	logger->log_info("[Flight Consumer] Consumer initialized.");
+	logger->log_study("Initialized");
+	log_configuration();
+}
+
+void ArrowFlightConsumer::subscribe(const std::string &ticket) {
+	ticket_names_.push_back(ticket);
+	logger->log_info("[Flight Consumer] Subscribed ticket: " + ticket);
+}
+
+void ArrowFlightConsumer::consume_from_publisher_(const std::string &endpoint,
+                                                  const std::string &ticket) {
+	subscribed_streams.inc();
+
+	auto loc_res =
+	    arrow::flight::Location::ForGrpcTcp(endpoint, publisher_port_);
+	if (!loc_res.ok()) {
+		logger->log_error("[Flight Consumer] ForGrpcTcp failed: "
+		                  + loc_res.status().ToString());
+		subscribed_streams.dec();
+		return;
+	}
+
+	auto client_res = arrow::flight::FlightClient::Connect(*loc_res);
+	if (!client_res.ok()) {
+		logger->log_error("[Flight Consumer] Connect failed to " + endpoint
+		                  + ":" + std::to_string(publisher_port_) + " : "
+		                  + client_res.status().ToString());
+		subscribed_streams.dec();
+		return;
+	}
+	auto client = std::move(client_res).ValueOrDie();
+
+	arrow::flight::Ticket t{ticket};
+	auto reader_res = client->DoGet(t);
+	if (!reader_res.ok()) {
+		logger->log_error("[Flight Consumer] DoGet failed ticket=" + ticket
+		                  + " from " + endpoint + " : "
+		                  + reader_res.status().ToString());
+		subscribed_streams.dec();
+		return;
+	}
+	auto reader = std::move(reader_res).ValueOrDie();
 
 	while (true) {
-		ARROW_ASSIGN_OR_RAISE(auto chunk, reader->Next());
-		auto batch = chunk.data;
-		if (!batch) {
+		auto chunk = reader->Next();
+		if (!chunk.ok()) {
+			logger->log_error("[Flight Consumer] Next() failed ticket=" + ticket
+			                  + " from " + endpoint + " : "
+			                  + chunk.status().ToString());
+			break;
+		}
+
+		auto batch = chunk->data;
+		if (!batch)
+			break;
+
+		// [message_id, kind, data]
+		if (batch->num_columns() < 3) {
+			logger->log_error("[Flight Consumer] Invalid batch schema: "
+			                  "expected >= 3 columns");
 			break;
 		}
 
@@ -60,147 +161,49 @@ arrow::Status ArrowFlightConsumer::FlightServerLight::DoPut(
 		for (int64_t i = 0; i < batch->num_rows(); ++i) {
 			std::string message_id = message_id_column->GetString(i);
 			PayloadKind kind = static_cast<PayloadKind>(kind_column->Value(i));
-			size_t row_size = message_id_column->value_length(i)
-			    + sizeof(uint8_t) + data_column->value_length(i);
+			(void)kind;
+
 			std::string_view data_view = data_column->GetView(i);
 			size_t data_size = data_view.size();
 
-			consumer_->logger->log_study(
-			    "Reception," + message_id + "," + std::to_string(data_size)
-			    + ',' + ticket + "," + std::to_string(row_size));
+			size_t row_size = message_id_column->value_length(i)
+			    + sizeof(uint8_t) + data_column->value_length(i);
+
+			logger->log_study("Reception," + message_id + ","
+			                  + std::to_string(data_size) + "," + ticket + ","
+			                  + std::to_string(row_size));
 
 			if (message_id.find(TERMINATION_SIGNAL) != std::string::npos) {
-				consumer_->subscribed_streams.dec();
-				consumer_->logger->log_info(
-				    "[Flight Consumer] Received termination signal for ticket: "
-				    + ticket);
-
-				if (consumer_->subscribed_streams.get() == 0) {
-					bool expected = false;
-					if (consumer_->shutdown_requested_.compare_exchange_strong(
-					        expected, true)) {
-						consumer_->logger->log_info(
-						    "[Flight Consumer] All streams terminated, "
-						    "shutting down server.");
-
-						// Shutdown the server asynchronously to avoid deadlock
-						std::thread([srv = consumer_->server_.get(),
-						             log = consumer_->logger]() {
-							auto st =
-							    srv ? srv->Shutdown() : arrow::Status::OK();
-							if (!st.ok())
-								log->log_error(
-								    "[Flight Consumer] Server shutdown failed: "
-								    + st.ToString());
-						}).detach();
-					}
-				}
-
-				consumer_->logger->log_info(
-				    "[Flight Consumer] Remaining streams: "
-				    + std::to_string(consumer_->subscribed_streams.get()));
-
-				return arrow::Status::OK();
+				logger->log_info(
+				    "[Flight Consumer] Received termination for ticket="
+				    + ticket + " from publisher=" + endpoint);
+				subscribed_streams.dec();
+				return;
 			}
 		}
 	}
 
-	return arrow::Status::OK();
+	logger->log_info(
+	    "[Flight Consumer] Stream ended without termination. ticket=" + ticket
+	    + " publisher=" + endpoint);
+	subscribed_streams.dec();
 }
 
-ArrowFlightConsumer::ArrowFlightConsumer(std::shared_ptr<Logger> logger)
-    : IConsumer(logger), server_(nullptr) {
-	logger->log_info("[Flight Consumer] ArrowFlightConsumer created.");
-}
+void ArrowFlightConsumer::start_loop() {
+	logger->log_info(
+	    "[Flight Consumer] Starting client loops (thread pool)...");
 
-ArrowFlightConsumer::~ArrowFlightConsumer() {
-	logger->log_debug("[Flight Consumer] Destructor finished");
-}
-
-void ArrowFlightConsumer::initialize() {
-	logger->log_study("Initializing");
-
-	const std::string vendpoint =
-	    utils::get_env_var_or_default("CONSUMER_ENDPOINT", "localhost");
-	const std::string port_str =
-	    utils::get_env_var_or_default("CONSUMER_PORT", "8815");
-	const std::optional<std::string> vTickets = utils::get_env_var("TOPICS");
-
-	std::string err_msg;
-	int port;
-	try {
-		port = std::stoi(port_str);
-	} catch (const std::invalid_argument &e) {
-		err_msg = "[Flight Consumer] Invalid port number: " + port_str;
-		logger->log_error(err_msg);
-		throw std::runtime_error(err_msg);
-	} catch (const std::out_of_range &e) {
-		err_msg = "[Flight Consumer] Port number out of range: " + port_str;
-		logger->log_error(err_msg);
-		throw std::runtime_error(err_msg);
-	}
-	if (!vTickets || vTickets.value().empty()) {
-		err_msg = "[Flight Consumer] Missing required environment "
-		          "variable TOPICS.";
-		logger->log_error(err_msg);
-		throw std::runtime_error(err_msg);
-	}
-
-	std::istringstream endpoints(vendpoint);
-	std::string endpoint;
-	std::getline(endpoints, endpoint, ',');
-	if (endpoint.empty()) {
-		err_msg = "[Flight Consumer] Empty endpoint provided.";
-		logger->log_error(err_msg);
-		throw std::runtime_error(err_msg);
-	}
-
-	auto loc_res = arrow::flight::Location::ForGrpcTcp(endpoint, port);
-	if (!loc_res.ok()) {
-		logger->log_error("[Flight Consumer] ForGrpcTcp failed: "
-		                  + loc_res.status().ToString());
-		throw std::runtime_error("[Flight Consumer] ForGrpcTcp failed: "
-		                         + loc_res.status().ToString());
-	}
-	location_ = *loc_res;
-
-	arrow::flight::FlightServerOptions options(location_);
-	server_ = std::make_unique<FlightServerLight>(this);
-	auto status = server_->Init(options);
-	if (!status.ok()) {
-		logger->log_error(
-		    "[Flight Consumer] Flight server initialization failed: "
-		    + status.ToString());
-		throw std::runtime_error(
-		    "[Flight Consumer] Flight server initialization failed: "
-		    + status.ToString());
-	}
-
-	std::istringstream tickets(vTickets.value_or(""));
-	std::string ticket;
-	std::unordered_set<std::string> unique_tickets;
-	while (std::getline(tickets, ticket, ',')) {
-		logger->log_debug("[Flight Consumer] Handling subscription to ticket "
-		                  + ticket);
-		if (!ticket.empty() && unique_tickets.insert(ticket).second) {
-			logger->log_info("[Flight Consumer] Connecting to stream ("
-			                 + vendpoint + ":" + port_str + "," + ticket + ")");
-			subscribe(ticket); // add to thread pool
+	for (const auto &pub : publisher_endpoints_) {
+		for (const auto &ticket : ticket_names_) {
+			logger->log_info("[Flight Consumer] Queue DoGet from " + pub + ":"
+			                 + std::to_string(publisher_port_)
+			                 + " ticket=" + ticket);
+			thread_pool_.detach_task(
+			    [this, pub, ticket] { consume_from_publisher_(pub, ticket); });
 		}
 	}
-
-	logger->log_debug("[Flight Consumer] Subscription list will have size "
-	                  + std::to_string(ticket_names_.size()));
-
-	logger->log_info("[Flight Consumer] Consumer initialized and connected.");
-	logger->log_study("Initialized");
-	log_configuration();
-}
-
-void ArrowFlightConsumer::subscribe(const std::string &ticket) {
-	logger->log_info("[Flight Consumer] Queued subscription for ticket: "
-	                 + ticket);
-	subscribed_streams.inc();
+	thread_pool_.wait();
+	logger->log_info("[Flight Consumer] All streams ended.");
 }
 
 bool ArrowFlightConsumer::deserialize(const void *raw_message, size_t len,
@@ -210,24 +213,22 @@ bool ArrowFlightConsumer::deserialize(const void *raw_message, size_t len,
 	return false;
 }
 
-void ArrowFlightConsumer::start_loop() {
-	logger->log_info("[Flight Consumer] Starting server loop...");
-	auto status = server_->Serve();
-	if (!status.ok()) {
-		logger->log_error("[Flight Consumer] Server failed: "
-		                  + status.ToString());
-		throw std::runtime_error("[Flight Consumer] Server failed: "
-		                         + status.ToString());
-	}
-	logger->log_info("[Flight Consumer] Server loop has ended.");
-}
-
 void ArrowFlightConsumer::log_configuration() {
 	logger->log_config("[Flight Consumer] [CONFIG_BEGIN]");
 
-	logger->log_config("[CONFIG] Endpoint=" + location_.ToString());
+	logger->log_config(
+	    "[CONFIG] PUBLISHER_ENDPOINTS="
+	    + utils::get_env_var_or_default(
+	        "PUBLISHER_ENDPOINTS",
+	        utils::get_env_var_or_default("CONSUMER_ENDPOINT", "")));
 
-	logger->log_config("[CONFIG] topics="
+	logger->log_config("[CONFIG] PUBLISHER_PORT="
+	                   + utils::get_env_var_or_default(
+	                       "PUBLISHER_PORT",
+	                       utils::get_env_var_or_default("CONSUMER_PORT", "")));
+
+	logger->log_config("[CONFIG] TOPICS="
 	                   + utils::get_env_var_or_default("TOPICS", ""));
+	logger->log_config("[CONFIG] THREADS=4");
 	logger->log_config("[Flight Consumer] [CONFIG_END]");
 }

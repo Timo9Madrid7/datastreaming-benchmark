@@ -21,6 +21,7 @@ RUN apt-get update \
 RUN mkdir -p /app/technologies
 RUN mkdir -p /app/technologies/arrowflight_p2p
 COPY ./technologies/arrowflight_p2p /app/technologies/arrowflight_p2p
+COPY ./third_party_libs /app/third_party_libs
 
 # Build the arrow-flight-specific library
 RUN set -eux; \
