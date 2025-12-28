@@ -23,7 +23,7 @@
 #include "Utils.hpp"
 
 ArrowFlightConsumer::ArrowFlightConsumer(std::shared_ptr<Logger> logger)
-    : IConsumer(logger) {
+    : IConsumer(logger), publisher_port_(8815) {
 	this->logger->log_info("[Flight Consumer] ArrowFlightConsumer created.");
 }
 
@@ -43,6 +43,9 @@ void ArrowFlightConsumer::initialize() {
 	    "PUBLISHER_PORT",
 	    utils::get_env_var_or_default("CONSUMER_PORT", "8815"));
 
+	const std::string string_num_threads =
+	    utils::get_env_var_or_default("THREADS", "4");
+
 	const std::optional<std::string> vTickets = utils::get_env_var("TOPICS");
 	if (!vTickets || vTickets->empty()) {
 		throw std::runtime_error(
@@ -53,6 +56,14 @@ void ArrowFlightConsumer::initialize() {
 		publisher_port_ = std::stoi(port_str);
 	} catch (...) {
 		throw std::runtime_error("[Flight Consumer] Invalid port: " + port_str);
+	}
+
+	try {
+		const int num_threads = std::stoi(string_num_threads);
+		thread_pool_.reset(num_threads);
+	} catch (...) {
+		throw std::runtime_error("[Flight Consumer] Invalid THREADS value: "
+		                         + string_num_threads);
 	}
 
 	// parse publishers endpoints

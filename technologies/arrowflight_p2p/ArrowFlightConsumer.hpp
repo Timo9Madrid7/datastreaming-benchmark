@@ -25,7 +25,7 @@ class ArrowFlightConsumer : public IConsumer {
 
   private:
 	std::vector<std::string> publisher_endpoints_;
-	int publisher_port_ = 8815;
+	int publisher_port_;
 
 	std::vector<std::string> ticket_names_;
 	BS::pause_thread_pool thread_pool_{4};
