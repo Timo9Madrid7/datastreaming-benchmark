@@ -59,7 +59,7 @@ class TechnologyManager(ABC):
         return config
 
     def save_runtime_container_config(
-        self, container: Container, scenario_config: str, scenario_name: str
+        self, container: Container, scenario_config: str, scenario_name: str, date_time: str
     ) -> None:
         """
         Saves the runtime configuration of a container to a JSON file.
@@ -68,6 +68,7 @@ class TechnologyManager(ABC):
             container (Container): The Docker container instance.
             scenario_config (str): The scenario configuration name.
             scenario_name (str): The scenario name.
+            date_time (str): The date and time string for the experiment.
 
         Returns:
             None
@@ -78,6 +79,7 @@ class TechnologyManager(ABC):
             "logs",
             scenario_config,
             self.tech_name,
+            date_time,
             f"{scenario_name}_{container.name}_runtimeconfig.json",
         )
         with open(config_file, "w", encoding="utf-8") as f:

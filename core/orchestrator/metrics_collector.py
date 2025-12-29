@@ -18,10 +18,11 @@ class MetricsCollector:
         tech_name: str,
         scenario_name: str,
         scenario_config: str,
+        date_time: str,
         interval: float = 2.0,
     ) -> None:
         self.tech_name = tech_name
-        self.logs_dir = os.path.join("logs", scenario_config, tech_name)
+        self.logs_dir = os.path.join("logs", scenario_config, tech_name, date_time)
         self.log_file = os.path.join(self.logs_dir, f"{scenario_name}")
         self.scenario_name = scenario_name
         self.interval = interval if interval > 2.0 else 2.0

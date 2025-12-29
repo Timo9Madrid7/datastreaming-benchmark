@@ -11,16 +11,17 @@ from .utils.logger import logger
 class ContainerEventsLogger:
     def __init__(
         self,
-        tech_name,
-        scenario_name,
-        scenario_config,
-        separator=";",
-        log_level="STUDY",
+        tech_name: str,
+        scenario_name: str,
+        scenario_config: str,
+        date_time: str,
+        separator: str = ";",
+        log_level: str = "STUDY",
     ) -> None:
         self.tech_name = tech_name
         self.scenario_name = scenario_name
         self.log_file = os.path.join(
-            "logs", scenario_config, tech_name, f"{scenario_name}_events.parquet"
+            "logs", scenario_config, tech_name, date_time, f"{scenario_name}_events.parquet"
         )
         self.client = docker.from_env()
         self.fieldnames = [
