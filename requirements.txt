@@ -2,7 +2,10 @@ certifi==2025.1.31
 charset-normalizer==3.4.1
 docker==7.1.0
 idna==3.10
-pywin32==309
+altair==5.4.1
+pandas==2.3.3
+polars==1.7.1
 PyYAML==6.0.2
 requests==2.32.3
+streamlit==1.37.1
 urllib3==2.3.0
