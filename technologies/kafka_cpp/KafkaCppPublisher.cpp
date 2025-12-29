@@ -35,8 +35,6 @@ KafkaCppPublisher::~KafkaCppPublisher() {
 }
 
 void KafkaCppPublisher::initialize() {
-	logger->log_study("Initializing");
-
 	const std::string vendpoint =
 	    utils::get_env_var_or_default("PUBLISHER_ENDPOINT", "localhost");
 	const std::string port =
@@ -86,8 +84,6 @@ void KafkaCppPublisher::initialize() {
 		                  + errstr);
 		throw std::runtime_error("Failed to create producer: " + errstr);
 	}
-
-	logger->log_study("Initialized");
 	log_configuration();
 }
 
@@ -121,9 +117,6 @@ bool KafkaCppPublisher::serialize(const Payload &message, void *out) {
 
 void KafkaCppPublisher::send_message(const Payload &message,
                                      std::string &topic) {
-	logger->log_study("Intention," + message.message_id + ","
-	                  + std::to_string(message.data_size) + "," + topic);
-
 	size_t serialized_size = sizeof(uint16_t) // Message ID Length
 	    + message.message_id.size()           // Message ID
 	    + sizeof(uint8_t)                     // Kind

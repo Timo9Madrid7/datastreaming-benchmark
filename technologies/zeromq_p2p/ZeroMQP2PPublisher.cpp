@@ -64,7 +64,6 @@ ZeroMQP2PPublisher::~ZeroMQP2PPublisher() {
 }
 
 void ZeroMQP2PPublisher::initialize() {
-	logger->log_study("[ZeroMQP2P Publisher] Initializing");
 	const char *vendpoint = std::getenv("PUBLISHER_ENDPOINT");
 	if (!vendpoint) {
 		logger->log_debug("[ZeroMQP2P Publisher] PUBLISHER_ENDPOINT not set, "
@@ -85,14 +84,11 @@ void ZeroMQP2PPublisher::initialize() {
 		logger->log_error("[ZeroMQP2P Publisher] Initialization failed: "
 		                  + std::string(e.what()));
 	}
-	logger->log_study("Initialized");
 	log_configuration();
 }
 
 void ZeroMQP2PPublisher::send_message(const Payload &message,
                                       std::string &topic) {
-	logger->log_study("Intention," + message.message_id + ","
-	                  + std::to_string(message.data_size) + "," + topic);
 	try {
 		size_t total_size = sizeof(uint8_t) // Topic Length
 		    + topic.size()                  // Topic

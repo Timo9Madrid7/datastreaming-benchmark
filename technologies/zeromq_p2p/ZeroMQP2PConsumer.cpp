@@ -79,8 +79,6 @@ ZeroMQP2PConsumer::~ZeroMQP2PConsumer() {
 }
 
 void ZeroMQP2PConsumer::initialize() {
-	logger->log_study("Initializing");
-
 	// assume **all** default ports 5555 if not specified
 	const std::string port =
 	    utils::get_env_var_or_default("CONSUMER_PORT", "5555");
@@ -159,7 +157,6 @@ void ZeroMQP2PConsumer::initialize() {
 
 	logger->log_info(
 	    "[ZeroMQP2P Consumer] Consumer initialized and connected.");
-	logger->log_study("Initialized");
 	log_configuration();
 }
 

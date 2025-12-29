@@ -121,8 +121,6 @@ arrow::Status ArrowFlightPublisher::FlightServerLight::DoGet(
 }
 
 void ArrowFlightPublisher::initialize() {
-	logger->log_study("Initializing");
-
 	const std::string vendpoint =
 	    utils::get_env_var_or_default("PUBLISHER_ENDPOINT", "0.0.0.0");
 	const std::string port_str =
@@ -170,7 +168,6 @@ void ArrowFlightPublisher::initialize() {
 	});
 
 	logger->log_info("[Flight Publisher] Publisher server initialized.");
-	logger->log_study("Initialized");
 	log_configuration();
 }
 
@@ -198,9 +195,6 @@ bool ArrowFlightPublisher::serialize(const Payload &message, void *out) {
 
 void ArrowFlightPublisher::send_message(const Payload &message,
                                         std::string &ticket) {
-	logger->log_study("Intention," + message.message_id + ","
-	                  + std::to_string(message.data_size) + "," + ticket);
-
 	BatchBuilder &bb = ticket_batch_builders_[ticket];
 
 	if (!serialize(message, &bb)) {

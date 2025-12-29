@@ -31,8 +31,6 @@ KafkaCppConsumer::~KafkaCppConsumer() {
 }
 
 void KafkaCppConsumer::initialize() {
-	logger->log_study("Initializing");
-
 	const std::string vendpoint =
 	    utils::get_env_var_or_default("CONSUMER_ENDPOINT", "localhost");
 	const std::string port =
@@ -133,7 +131,6 @@ void KafkaCppConsumer::initialize() {
 	}
 
 	logger->log_info("[Kafka Consumer] Consumer initialized and subscribed.");
-	logger->log_study("Initialized");
 	log_configuration();
 }
 

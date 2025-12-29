@@ -59,7 +59,6 @@ void KafkaConsumer::subscribe(const std::string &topic) {
 }
 
 void KafkaConsumer::initialize() {
-	logger->log_study("Initializing");
 	if (initialized_) {
 		logger->log_error(
 		    "[Kafka Consumer] Kafka Consumer already initialized.");
@@ -167,7 +166,6 @@ void KafkaConsumer::initialize() {
 	initialized_ = true;
 
 	logger->log_info("[Kafka Consumer] Consumer initialized and subscribed.");
-	logger->log_study("Initialized");
 	log_configuration();
 }
 
