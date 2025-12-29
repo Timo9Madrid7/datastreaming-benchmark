@@ -41,10 +41,10 @@ def _load_resource_metrics(run_dir: Path) -> pl.DataFrame:
     frames: list[pl.DataFrame] = []
     for csv_file in csv_files:
         # indicate different containers
-        source = csv_file.stem.rsplit("-", 1)[-1] if "-" in csv_file.stem else "BROKER"
+        source = csv_file.stem.rsplit("-", 1)[-1] if "-" in csv_file.stem else "Broker"
         frames.append(
             pl.read_csv(csv_file).with_columns(
-                pl.lit(source).alias("source"),  
+                pl.lit(source).alias("source"),
                 pl.coalesce(
                     [
                         pl.col("timestamp").cast(pl.Datetime, strict=False),
@@ -161,6 +161,8 @@ def resource_usage_for_run(
     metrics = _load_resource_metrics(run_dir)
     if metrics.is_empty():
         return pl.DataFrame()
+    metrics = metrics.filter((pl.col("source") == "Broker") |
+                             pl.col("source").str.starts_with("P"))
     metrics = metrics.sort(["source", "timestamp"]).with_columns(
         pl.col("disk_read").diff().over("source").alias("disk_read_delta"),
         pl.col("disk_write").diff().over("source").alias("disk_write_delta"),
@@ -180,10 +182,25 @@ def resource_usage_for_run(
         .otherwise(disk_throughput_mb_s)
         .alias("disk_throughput_mb_s")
     )
-    metrics = metrics.sort("timestamp")
+    metrics = metrics.with_columns(
+        pl.cum_count("source").over("source").alias("row_index")
+    )
+    producer_counts = (
+        metrics.filter(pl.col("source").str.starts_with("P"))
+        .group_by("source")
+        .agg(pl.len().alias("count"))
+    )
+    if producer_counts.is_empty():
+        return pl.DataFrame()
+    min_producer_count = producer_counts.select(pl.col("count").min()).item()
+    metrics = metrics.filter(pl.col("row_index") <= min_producer_count)
     aggregated = (
-        metrics.group_by_dynamic("timestamp", every="1s")
+        metrics.group_by("row_index")
         .agg(
+            pl.from_epoch(
+                pl.col("timestamp").dt.epoch("ms").mean(),
+                time_unit="ms",
+            ).alias("timestamp"),
             pl.col("cpu_usage_perc").sum().alias("cpu_usage_perc"),
             pl.col("memory_usage").sum().alias("memory_usage"),
             pl.col("disk_throughput_mb_s").sum().alias("disk_throughput_mb_s"),
