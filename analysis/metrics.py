@@ -40,9 +40,11 @@ def _load_resource_metrics(run_dir: Path) -> pl.DataFrame:
         return pl.DataFrame()
     frames: list[pl.DataFrame] = []
     for csv_file in csv_files:
+        # indicate different containers
+        source = csv_file.stem.rsplit("-", 1)[-1] if "-" in csv_file.stem else "BROKER"
         frames.append(
             pl.read_csv(csv_file).with_columns(
-                pl.lit(csv_file.stem).alias("source"),  # indicate different containers
+                pl.lit(source).alias("source"),  
                 pl.coalesce(
                     [
                         pl.col("timestamp").cast(pl.Datetime, strict=False),
