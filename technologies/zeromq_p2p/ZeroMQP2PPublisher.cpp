@@ -109,10 +109,10 @@ void ZeroMQP2PPublisher::send_message(const Payload &message,
 		    + " and size: " + std::to_string(message.data_size) + " bytes");
 
 		zmq::message_t zmq_message(serialized.begin(), serialized.end());
-		publisher.send(zmq_message, zmq::send_flags::none);
 		logger->log_study("Publication," + message.message_id + ","
 		                  + std::to_string(message.data_size) + "," + topic
 		                  + "," + std::to_string(zmq_message.size()));
+		publisher.send(zmq_message, zmq::send_flags::none);
 		logger->log_debug(
 		    "[ZeroMQP2P Publisher] Socket connected clients: "
 		    + std::to_string(publisher.get(zmq::sockopt::events)));
