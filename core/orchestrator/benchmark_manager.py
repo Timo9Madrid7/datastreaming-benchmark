@@ -115,10 +115,16 @@ class BenchmarkManager:
         date_time = datetime.now().strftime("%Y%m%d_%H%M%S")
         scenario_name = ScenarioConfigManager.generate_scenario_name(scenario_config)
         metrics = MetricsCollector(
-            tech_name, scenario_name, self.scenario_name, date_time, interval=self.interval
+            tech_name,
+            scenario_name,
+            self.scenario_name,
+            date_time,
+            interval=self.interval,
         )
-        os.makedirs(os.path.join("logs", self.scenario_name,
-                    tech_name, date_time), exist_ok=True)
+        os.makedirs(
+            os.path.join("logs", self.scenario_name, tech_name, date_time),
+            exist_ok=True,
+        )
         try:
             logger.info(
                 f"Executing experiment for technology {tech_name} with scenario {scenario_name}..."

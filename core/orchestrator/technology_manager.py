@@ -59,7 +59,11 @@ class TechnologyManager(ABC):
         return config
 
     def save_runtime_container_config(
-        self, container: Container, scenario_config: str, scenario_name: str, date_time: str
+        self,
+        container: Container,
+        scenario_config: str,
+        scenario_name: str,
+        date_time: str,
     ) -> None:
         """
         Saves the runtime configuration of a container to a JSON file.

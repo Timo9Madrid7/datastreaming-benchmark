@@ -21,7 +21,11 @@ class ContainerEventsLogger:
         self.tech_name = tech_name
         self.scenario_name = scenario_name
         self.log_file = os.path.join(
-            "logs", scenario_config, tech_name, date_time, f"{scenario_name}_events.parquet"
+            "logs",
+            scenario_config,
+            tech_name,
+            date_time,
+            f"{scenario_name}_events.parquet",
         )
         self.client = docker.from_env()
         self.fieldnames = [

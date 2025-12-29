@@ -53,7 +53,7 @@ def main() -> None:
     scenario = st.sidebar.selectbox("Scenario", sorted(scenarios.keys()))
 
     duration_s = infer_duration_seconds_from_logs(scenario)
-    if (duration_s is None):
+    if duration_s is None:
         st.error("Could not infer scenario duration from logs.")
         return
     st.sidebar.caption(f"Duration inferred from logs: {duration_s}s")
@@ -76,7 +76,7 @@ def main() -> None:
     else:
         selected_runs = st.sidebar.multiselect(
             "Runs",
-            sorted({run for runs in runs_by_tech.values()for run in runs}),
+            sorted({run for runs in runs_by_tech.values() for run in runs}),
         )
     if not selected_runs:
         st.warning("Select at least one run.")
@@ -112,8 +112,11 @@ def main() -> None:
                 continue
             throughput = load_throughput(scenario, tech, run, window_s)
             if not throughput.is_empty():
-                run_frames.append(throughput.with_columns(
-                    pl.lit(tech).alias("tech"), pl.lit(run).alias("run")))
+                run_frames.append(
+                    throughput.with_columns(
+                        pl.lit(tech).alias("tech"), pl.lit(run).alias("run")
+                    )
+                )
             latency_stats = load_latency_stats(scenario, tech, run)
             if not latency_stats.is_empty():
                 latency_stats_frames.append(latency_stats)
@@ -139,55 +142,81 @@ def main() -> None:
                 )
 
         avg_throughput = average_curve(
-            [frame.select(["time_s", "throughput_mb_s"]) for frame in run_frames], "throughput_mb_s")
+            [frame.select(["time_s", "throughput_mb_s"]) for frame in run_frames],
+            "throughput_mb_s",
+        )
         if not avg_throughput.is_empty():
-            throughput_frames.append(avg_throughput.with_columns(
-                pl.lit(tech).alias("tech"), pl.lit("avg").alias("run")))
+            throughput_frames.append(
+                avg_throughput.with_columns(
+                    pl.lit(tech).alias("tech"), pl.lit("avg").alias("run")
+                )
+            )
         avg_latency = average_latency(latency_stats_frames)
         if not avg_latency.is_empty():
             latency_frames.append(avg_latency.with_columns(pl.lit(tech).alias("tech")))
-        avg_cpu = average_curve([frame.select(["time_s", "cpu_usage_perc"])
-                                for frame in cpu_runs], "cpu_usage_perc")
+        avg_cpu = average_curve(
+            [frame.select(["time_s", "cpu_usage_perc"]) for frame in cpu_runs],
+            "cpu_usage_perc",
+        )
         if not avg_cpu.is_empty():
-            cpu_frames.append(avg_cpu.with_columns(
-                pl.lit(tech).alias("tech"), pl.lit("avg").alias("run")))
-        avg_memory = average_curve([frame.select(["time_s", "memory_mb"])
-                                   for frame in mem_runs], "memory_mb")
+            cpu_frames.append(
+                avg_cpu.with_columns(
+                    pl.lit(tech).alias("tech"), pl.lit("avg").alias("run")
+                )
+            )
+        avg_memory = average_curve(
+            [frame.select(["time_s", "memory_mb"]) for frame in mem_runs], "memory_mb"
+        )
         if not avg_memory.is_empty():
-            memory_frames.append(avg_memory.with_columns(
-                pl.lit(tech).alias("tech"), pl.lit("avg").alias("run")))
+            memory_frames.append(
+                avg_memory.with_columns(
+                    pl.lit(tech).alias("tech"), pl.lit("avg").alias("run")
+                )
+            )
         avg_disk = average_curve(
             [frame.select(["time_s", "disk_throughput_mb_s"]) for frame in disk_runs],
             "disk_throughput_mb_s",
         )
         if not avg_disk.is_empty():
-            disk_frames.append(avg_disk.with_columns(
-                pl.lit(tech).alias("tech"), pl.lit("avg").alias("run")))
+            disk_frames.append(
+                avg_disk.with_columns(
+                    pl.lit(tech).alias("tech"), pl.lit("avg").alias("run")
+                )
+            )
 
         avg_throughput_value = (
-            avg_throughput.select(pl.col("throughput_mb_s").mean()
-                                  ).item() if not avg_throughput.is_empty() else 0
+            avg_throughput.select(pl.col("throughput_mb_s").mean()).item()
+            if not avg_throughput.is_empty()
+            else 0
         )
-        avg_latency_value = avg_latency.select(
-            pl.col("p99_ms")).item() if not avg_latency.is_empty() else 0
+        avg_latency_value = (
+            avg_latency.select(pl.col("p99_ms")).item()
+            if not avg_latency.is_empty()
+            else 0
+        )
         kpi_data[tech] = (avg_throughput_value, avg_latency_value)
 
     for column, tech in zip(kpi_columns, selected_techs):
         throughput_value, latency_value = kpi_data.get(tech, (0, 0))
-        column.metric(label=f"{tech} Avg Throughput (MB/s)",
-                      value=f"{throughput_value:,.2f}")
+        column.metric(
+            label=f"{tech} Avg Throughput (MB/s)", value=f"{throughput_value:,.2f}"
+        )
         column.metric(label=f"{tech} P99 Latency (ms)", value=f"{latency_value:,.2f}")
 
     st.header("Throughput (MB/s)")
-    throughput_display = pl.concat(
-        throughput_frames, how="vertical") if throughput_frames else pl.DataFrame()
+    throughput_display = (
+        pl.concat(throughput_frames, how="vertical")
+        if throughput_frames
+        else pl.DataFrame()
+    )
     if show_individual:
         individual_frames = [
             frame
             for tech in selected_techs
             for frame in [
-                load_throughput(scenario, tech, run, window_s)
-                .with_columns(pl.lit(tech).alias("tech"), pl.lit(run).alias("run"))
+                load_throughput(scenario, tech, run, window_s).with_columns(
+                    pl.lit(tech).alias("tech"), pl.lit(run).alias("run")
+                )
                 for run in runs_by_tech.get(tech, [])
                 if run in selected_runs
             ]
@@ -195,14 +224,16 @@ def main() -> None:
         ]
         if individual_frames:
             throughput_display = pl.concat(
-                [throughput_display, *individual_frames], how="vertical")
+                [throughput_display, *individual_frames], how="vertical"
+            )
     if throughput_display.is_empty():
         st.info("No throughput data available for the selected filters.")
     else:
         st.altair_chart(
             line_chart(
                 throughput_display.with_columns(
-                    (pl.col("tech") + " (" + pl.col("run") + ")").alias("series")),
+                    (pl.col("tech") + " (" + pl.col("run") + ")").alias("series")
+                ),
                 x="time_s",
                 y="throughput_mb_s",
                 color="series",
@@ -213,8 +244,9 @@ def main() -> None:
         )
 
     st.header("Latency (ms)")
-    latency_table_frame = pl.concat(
-        latency_frames, how="vertical") if latency_frames else pl.DataFrame()
+    latency_table_frame = (
+        pl.concat(latency_frames, how="vertical") if latency_frames else pl.DataFrame()
+    )
     if latency_table_frame.is_empty():
         st.info("No latency data available for the selected filters.")
     else:
@@ -228,12 +260,15 @@ def main() -> None:
         st.dataframe(latency_table(latency_table_frame), use_container_width=True)
 
     st.header("Resource Usage")
-    cpu_display = pl.concat(
-        cpu_frames, how="vertical") if cpu_frames else pl.DataFrame()
-    memory_display = pl.concat(
-        memory_frames, how="vertical") if memory_frames else pl.DataFrame()
-    disk_display = pl.concat(
-        disk_frames, how="vertical") if disk_frames else pl.DataFrame()
+    cpu_display = (
+        pl.concat(cpu_frames, how="vertical") if cpu_frames else pl.DataFrame()
+    )
+    memory_display = (
+        pl.concat(memory_frames, how="vertical") if memory_frames else pl.DataFrame()
+    )
+    disk_display = (
+        pl.concat(disk_frames, how="vertical") if disk_frames else pl.DataFrame()
+    )
     if show_individual:
         for tech in selected_techs:
             for run in runs_by_tech.get(tech, []):
@@ -265,7 +300,9 @@ def main() -> None:
                 disk_display = pl.concat(
                     [
                         disk_display,
-                        resources.select(["time_s", "disk_throughput_mb_s"]).with_columns(
+                        resources.select(
+                            ["time_s", "disk_throughput_mb_s"]
+                        ).with_columns(
                             pl.lit(tech).alias("tech"),
                             pl.lit(run).alias("run"),
                         ),
@@ -279,7 +316,8 @@ def main() -> None:
 
     cpu_chart = line_chart(
         cpu_display.with_columns(
-            (pl.col("tech") + " (" + pl.col("run") + ")").alias("series")),
+            (pl.col("tech") + " (" + pl.col("run") + ")").alias("series")
+        ),
         x="time_s",
         y="cpu_usage_perc",
         color="series",
@@ -288,7 +326,8 @@ def main() -> None:
     )
     memory_chart = line_chart(
         memory_display.with_columns(
-            (pl.col("tech") + " (" + pl.col("run") + ")").alias("series")),
+            (pl.col("tech") + " (" + pl.col("run") + ")").alias("series")
+        ),
         x="time_s",
         y="memory_mb",
         color="series",
@@ -297,7 +336,8 @@ def main() -> None:
     )
     disk_chart = line_chart(
         disk_display.with_columns(
-            (pl.col("tech") + " (" + pl.col("run") + ")").alias("series")),
+            (pl.col("tech") + " (" + pl.col("run") + ")").alias("series")
+        ),
         x="time_s",
         y="disk_throughput_mb_s",
         color="series",

@@ -25,7 +25,9 @@ def _load_event_log(run_dir: Path) -> pl.DataFrame:
                     pl.col("timestamp").cast(pl.Datetime, strict=False),
                     pl.col("timestamp")
                     .cast(pl.Utf8)
-                    .str.strptime(pl.Datetime, format=EVENT_TIMESTAMP_FMT, strict=False),
+                    .str.strptime(
+                        pl.Datetime, format=EVENT_TIMESTAMP_FMT, strict=False
+                    ),
                 ]
             ).alias("timestamp"),
             pl.col("serialized_size").cast(pl.Int64),
@@ -50,7 +52,9 @@ def _load_resource_metrics(run_dir: Path) -> pl.DataFrame:
                         pl.col("timestamp").cast(pl.Datetime, strict=False),
                         pl.col("timestamp")
                         .cast(pl.Utf8)
-                        .str.strptime(pl.Datetime, format=RESOURCE_TIMESTAMP_FMT, strict=False),
+                        .str.strptime(
+                            pl.Datetime, format=RESOURCE_TIMESTAMP_FMT, strict=False
+                        ),
                     ]
                 ).alias("timestamp"),
             )
@@ -112,19 +116,13 @@ def latency_stats_for_run(
     events = _load_event_log(run_dir)
     if events.is_empty():
         return pl.DataFrame()
-    publications = (
-        events.filter(pl.col("event_type") == "Publication")
-        .select(
-            pl.col("message_id"),
-            pl.col("timestamp").alias("pub_ts"),
-        )
+    publications = events.filter(pl.col("event_type") == "Publication").select(
+        pl.col("message_id"),
+        pl.col("timestamp").alias("pub_ts"),
     )
-    consumptions = (
-        events.filter(pl.col("event_type") == "Reception")
-        .select(
-            pl.col("message_id"),
-            pl.col("timestamp").alias("cons_ts"),
-        )
+    consumptions = events.filter(pl.col("event_type") == "Reception").select(
+        pl.col("message_id"),
+        pl.col("timestamp").alias("cons_ts"),
     )
     latency = (
         publications.join(consumptions, on="message_id", how="inner")
@@ -162,18 +160,23 @@ def resource_usage_for_run(
     metrics = _load_resource_metrics(run_dir)
     if metrics.is_empty():
         return pl.DataFrame()
-    metrics = metrics.filter((pl.col("source") == "Broker") |
-                             pl.col("source").str.starts_with("P"))
+    metrics = metrics.filter(
+        (pl.col("source") == "Broker") | pl.col("source").str.starts_with("P")
+    )
     metrics = metrics.sort(["source", "timestamp"]).with_columns(
         pl.col("disk_read").diff().over("source").alias("disk_read_delta"),
         pl.col("disk_write").diff().over("source").alias("disk_write_delta"),
-        (
-            pl.col("timestamp").dt.epoch("ms").diff().over("source") / 1000
-        ).alias("time_delta_s"),
+        (pl.col("timestamp").dt.epoch("ms").diff().over("source") / 1000).alias(
+            "time_delta_s"
+        ),
     )
     disk_throughput_mb_s = (
         pl.when(pl.col("time_delta_s") > 0)
-        .then((pl.col("disk_read_delta") + pl.col("disk_write_delta")) / pl.col("time_delta_s") / 1_000_000)
+        .then(
+            (pl.col("disk_read_delta") + pl.col("disk_write_delta"))
+            / pl.col("time_delta_s")
+            / 1_000_000
+        )
         .otherwise(0)
         .fill_null(0)
     )
