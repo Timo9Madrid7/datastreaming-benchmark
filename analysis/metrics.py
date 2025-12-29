@@ -131,6 +131,7 @@ def latency_stats_for_run(
         .with_columns(
             (pl.col("cons_ts").dt.epoch("ms") - pl.col("pub_ts").dt.epoch("ms"))
             .cast(pl.Int64)
+            .clip(lower_bound=0)
             .alias("latency_ms")
         )
         .select("latency_ms")
