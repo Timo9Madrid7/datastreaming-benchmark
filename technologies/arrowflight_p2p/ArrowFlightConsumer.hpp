@@ -27,6 +27,7 @@ class ArrowFlightConsumer : public IConsumer {
 	std::vector<std::pair<std::string, std::string>> ticket_publisher_pairs_;
 	int publisher_port_;
 
+	//FIXME: hardcoded number of threads, make it configurable
 	BS::pause_thread_pool thread_pool_{4};
 
 	void consume_from_publisher_(const std::string &endpoint,
