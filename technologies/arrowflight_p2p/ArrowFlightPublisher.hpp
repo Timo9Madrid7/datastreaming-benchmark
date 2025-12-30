@@ -114,7 +114,7 @@ class ArrowFlightPublisher : public IPublisher {
 	std::thread server_thread_;
 	std::atomic_bool server_started_{false};
 
-	// tickect -> queue
+	// ticket -> queue
 	std::mutex streams_mu_;
 	std::unordered_map<std::string, std::shared_ptr<StreamState>> streams_;
 

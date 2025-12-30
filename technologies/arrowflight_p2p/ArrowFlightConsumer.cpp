@@ -2,7 +2,6 @@
 
 #include <arrow/array/array_binary.h>
 #include <arrow/array/array_primitive.h>
-#include <arrow/flight/server.h>
 #include <arrow/flight/types.h>
 #include <arrow/record_batch.h>
 #include <arrow/result.h>
@@ -66,36 +65,42 @@ void ArrowFlightConsumer::initialize() {
 		                         + string_num_threads);
 	}
 
-	// parse publishers endpoints
-	publisher_endpoints_.clear();
+	// parse publishers endpoints and tickets
+	ticket_publisher_pairs_.clear();
 	{
-		std::istringstream ss(vendpoints);
-		std::string ep;
-		while (std::getline(ss, ep, ',')) {
-			if (!ep.empty())
-				publisher_endpoints_.push_back(ep);
-		}
-	}
-	if (publisher_endpoints_.empty()) {
-		throw std::runtime_error(
-		    "[Flight Consumer] No publisher endpoints provided.");
-	}
-
-	// parse + dedupe tickets
-	ticket_names_.clear();
-	{
-		std::istringstream tickets(vTickets.value());
 		std::string ticket;
-		std::unordered_set<std::string> uniq;
+		std::string publisher;
+		std::istringstream tickets(vTickets.value());
+		std::istringstream publishers(vendpoints);
+		std::unordered_set<std::string> unique_pub_tickets;
+
 		while (std::getline(tickets, ticket, ',')) {
-			if (!ticket.empty() && uniq.insert(ticket).second) {
-				subscribe(ticket);
+			std::getline(publishers, publisher, ',');
+
+			if (publisher.empty()) {
+				logger->log_info(
+				    "[Arrow Flight] Empty publisher found for ticket " + ticket
+				    + ", skipping subscription.");
+				continue;
+			}
+			if (ticket.empty()) {
+				logger->log_info(
+				    "[Arrow Flight] Empty ticket found for publisher "
+				    + publisher + ", skipping subscription.");
+				continue;
+			}
+
+			if (unique_pub_tickets.insert(publisher + ":" + ticket).second) {
+				logger->log_info(
+				    "[Flight Consumer] Handling subscription to ticket "
+				    + ticket + " from publisher " + publisher);
+				ticket_publisher_pairs_.emplace_back(ticket, publisher);
 			}
 		}
 	}
-	if (ticket_names_.empty()) {
+	if (ticket_publisher_pairs_.empty()) {
 		throw std::runtime_error(
-		    "[Flight Consumer] No tickets provided in TOPICS.");
+		    "[Flight Consumer] No valid publisher-ticket pairs found.");
 	}
 
 	logger->log_info("[Flight Consumer] Consumer initialized.");
@@ -104,8 +109,10 @@ void ArrowFlightConsumer::initialize() {
 }
 
 void ArrowFlightConsumer::subscribe(const std::string &ticket) {
-	ticket_names_.push_back(ticket);
-	logger->log_info("[Flight Consumer] Subscribed ticket: " + ticket);
+	logger->log_debug(
+	    "[Flight Consumer] Subscribe called, but all subscriptions are handled "
+	    "in initialize(). Ignoring ticket="
+	    + ticket);
 }
 
 void ArrowFlightConsumer::consume_from_publisher_(const std::string &endpoint,
@@ -204,14 +211,17 @@ void ArrowFlightConsumer::start_loop() {
 	logger->log_info(
 	    "[Flight Consumer] Starting client loops (thread pool)...");
 
-	for (const auto &pub : publisher_endpoints_) {
-		for (const auto &ticket : ticket_names_) {
-			logger->log_info("[Flight Consumer] Queue DoGet from " + pub + ":"
-			                 + std::to_string(publisher_port_)
-			                 + " ticket=" + ticket);
-			thread_pool_.detach_task(
-			    [this, pub, ticket] { consume_from_publisher_(pub, ticket); });
-		}
+	for (const auto &pair : ticket_publisher_pairs_) {
+		const auto &ticket = pair.first;
+		const auto &publisher = pair.second;
+
+		logger->log_info("[Flight Consumer] Queue DoGet from " + publisher + ":"
+		                 + std::to_string(publisher_port_)
+		                 + " ticket=" + ticket);
+
+		thread_pool_.detach_task([this, publisher, ticket]() {
+			consume_from_publisher_(publisher, ticket);
+		});
 	}
 	thread_pool_.wait();
 	logger->log_info("[Flight Consumer] All streams ended.");
