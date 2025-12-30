@@ -1,28 +1,30 @@
 #pragma once
 
-#include "IConsumer.hpp"
+#include <cstddef>
 #include <librdkafka/rdkafka.h>
 #include <string>
-#include <vector>
 #include <unordered_set>
 
+#include "IConsumer.hpp"
+
 class KafkaConsumer : public IConsumer {
-public:
-    KafkaConsumer(std::shared_ptr<Logger> logger);
-    ~KafkaConsumer() override;
+  public:
+	KafkaConsumer(std::shared_ptr<Logger> logger);
+	~KafkaConsumer() override;
 
-    void initialize() override;
-    void subscribe(const std::string& topic) override;
-    Payload receive_message() override;
-    Payload deserialize(const std::string& raw_message) override;
-    void log_configuration() override;
+	void initialize() override;
+	void subscribe(const std::string &topic) override;
+	void start_loop() override;
+	bool deserialize(const void *raw_message, size_t len,
+	                 Payload &out) override;
+	void log_configuration() override;
 
-private:
-    std::string broker_;
-    std::unordered_set<std::string> topic_names_;
+  private:
+	std::string broker_;
+	std::unordered_set<std::string> topic_names_;
 
-    rd_kafka_t* consumer_;
-    rd_kafka_conf_t* conf_;
-    rd_kafka_topic_partition_list_t* subscription_list_;
-    bool initialized_;
+	rd_kafka_t *consumer_;
+	rd_kafka_conf_t *conf_;
+	rd_kafka_topic_partition_list_t *subscription_list_;
+	bool initialized_;
 };

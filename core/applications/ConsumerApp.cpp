@@ -11,7 +11,6 @@
 
 #include "Factory.hpp"
 #include "IConsumer.hpp"
-#include "Payload.hpp"
 #include "TechnologyLoader.hpp"
 #include "Utils.hpp"
 
@@ -62,35 +61,14 @@ void ConsumerApp::run() {
 
 	if (technology.value().find("p2p") == std::string::npos) {
 		// Give some time for the broker&producer to initialize
-		logger->log_info("[ConsumerApp] Wait" + std::to_string(sleep_time)
+		logger->log_info("[ConsumerApp] Wait " + std::to_string(sleep_time)
 		                 + "ms for initialization");
 		std::this_thread::sleep_for(std::chrono::milliseconds(sleep_time));
 	}
 	logger->log_info("[ConsumerApp] Initialized");
 
-	while (true) {
-		logger->log_debug("[ConsumerApp] Waiting for message...");
-		Payload message =
-		    consumer->receive_message(); // technology-specific receive
-		if (message.message_id == "") {
-			logger->log_info(
-			    "[ConsumerApp] Received message with no label -> Retrying.");
-			continue;
-		}
-		if (message.message_id.find(TERMINATION_SIGNAL) != std::string::npos) {
-			logger->log_info(
-			    "[ConsumerApp] Termination,"
-			    + std::to_string(consumer->get_terminated_streams_size()) + "/"
-			    + std::to_string(consumer->get_subscribed_streams_size()));
-			if (consumer->get_terminated_streams_size()
-			    >= consumer->get_subscribed_streams_size()) {
-				break; // All streams terminated
-			}
-			continue;
-		}
-		logger->log_info("[ConsumerApp] Update," + message.message_id + ","
-		                 + std::to_string(message.data_size));
-	}
+	logger->log_info("[ConsumerApp] Start receiving loop");
+	consumer->start_loop(); // technology-specific start receiving loop
 }
 
 int main(int argc, char *argv[]) {

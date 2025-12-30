@@ -1,4 +1,4 @@
-# Expected name of the image: core_image
+# Expected name of the image: core_base
 # Base image with system-level dependencies
 FROM ubuntu:22.04
 

@@ -1,0 +1,43 @@
+# Expected name: arrowflight_p2p_base
+# Arrow Flight C++ Base Dockerfile
+FROM core_base
+
+# Install Arrow-Flight-specific dependencies
+RUN apt-get update \
+    && apt-get install -y -V ca-certificates lsb-release wget \
+    && wget https://packages.apache.org/artifactory/arrow/$(lsb_release --id --short | tr 'A-Z' 'a-z')/apache-arrow-apt-source-latest-$(lsb_release --codename --short).deb \
+    && apt install -y -V ./apache-arrow-apt-source-latest-$(lsb_release --codename --short).deb \
+    && apt-get update \
+    && apt-get install -y -V \
+    libarrow-dev \
+    libarrow-flight-dev \
+    libgrpc++-dev \
+    libgrpc-dev \
+    libprotobuf-dev \
+    protobuf-compiler \
+    protobuf-compiler-grpc \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /app/technologies
+RUN mkdir -p /app/technologies/arrowflight_p2p
+COPY ./technologies/arrowflight_p2p /app/technologies/arrowflight_p2p
+COPY ./third_party_libs /app/third_party_libs
+
+# Build the arrow-flight-specific library
+RUN set -eux; \
+    GRPC_CPP_PLUGIN_BIN="$(command -v grpc_cpp_plugin)"; \
+    GRPCPP_SO="$(dpkg -L libgrpc++-dev | grep -E '/libgrpc\+\+\.so$' | head -n 1 || true)"; \
+    if [ -z "${GRPCPP_SO}" ]; then \
+    GRPCPP_SO="$(ldconfig -p | awk '/libgrpc\+\+\.so/{print $NF; exit}')"; \
+    fi; \
+    test -x "${GRPC_CPP_PLUGIN_BIN}"; \
+    test -f "${GRPCPP_SO}"; \
+    cd /app/build; \
+    cmake \
+    -DGRPC_CPP_PLUGIN="${GRPC_CPP_PLUGIN_BIN}" \
+    -DGRPCPP_IMPORTED_LOCATION="${GRPCPP_SO}" \
+    ..; \
+    cmake --build .
+
+# Move shared lib into /app/lib
+RUN mkdir -p /app/lib && cp /app/build/technologies/arrowflight_p2p/libarrowflight_p2p_technology.so /app/lib/
