@@ -116,6 +116,8 @@ def latency_stats_for_run(
     events = _load_event_log(run_dir)
     if events.is_empty():
         return pl.DataFrame()
+
+    # message_id is unique per publication-reception pair
     publications = events.filter(pl.col("event_type") == "Publication").select(
         pl.col("message_id"),
         pl.col("timestamp").alias("pub_ts"),
@@ -136,6 +138,7 @@ def latency_stats_for_run(
     )
     if latency.is_empty():
         return pl.DataFrame()
+
     stats = latency.select(
         pl.col("latency_ms").quantile(0.99).alias("p99_ms"),
         pl.col("latency_ms").quantile(0.90).alias("p90_ms"),
@@ -223,7 +226,7 @@ def resource_usage_for_run(
         .floor()
         .cast(pl.Int64)
         .alias("time_s"),
-        (pl.col("memory_usage") / 1_000_000).alias("memory_mb"),
+        (pl.col("memory_usage") / 1024 / 1024).alias("memory_mb"),
     ).select(["time_s", "cpu_usage_perc", "memory_mb", "disk_throughput_mb_s"])
     aggregated.write_parquet(cache_path)
     return aggregated

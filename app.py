@@ -86,7 +86,7 @@ def main() -> None:
         "Throughput window size (seconds)",
         min_value=10,
         max_value=max(10, duration_s),
-        value=min(10, max(10, duration_s)),
+        value=min(10, duration_s),
         step=1,
     )
     show_individual = st.sidebar.checkbox("Show individual runs", value=False)
