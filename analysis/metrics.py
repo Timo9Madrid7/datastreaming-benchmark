@@ -79,7 +79,8 @@ def throughput_for_run(
         return pl.DataFrame()
     min_ts = events.select(pl.col("timestamp").min()).item()
     throughput = (
-        events.sort("timestamp")
+        events.filter(pl.col("event_type") == "Publication")
+        .sort("timestamp")
         # [t0, t0+window), [t0+1s, t0+1s+window), ...]
         .group_by_dynamic("timestamp", every="1s", period=f"{window_s}s", closed="left")
         .agg(pl.col("serialized_size").sum().alias("bytes"))
