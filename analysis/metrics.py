@@ -84,7 +84,7 @@ def throughput_for_run(
         return pl.DataFrame()
 
     min_ts = events.select(pl.col("timestamp").min()).item()
-    
+
     throughput = (
         events.sort("timestamp")
         # [t0, t0+window), [t0+1s, t0+1s+window), ...]
