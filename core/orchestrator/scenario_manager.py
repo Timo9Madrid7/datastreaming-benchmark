@@ -131,7 +131,7 @@ class ScenarioManager:
             )
             topics = []
             if self.consumer_strat == "round-robin":
-                topics.append(f"{i%self.num_topics}")
+                topics.append(f"{i % self.num_topics}")
             if self.consumer_strat == "shared":
                 topics = [f"{i}" for i in list(range(self.num_topics))]
             con_configs[con_id] = {

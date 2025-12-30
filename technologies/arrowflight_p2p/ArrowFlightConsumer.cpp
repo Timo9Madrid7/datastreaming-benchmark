@@ -32,8 +32,6 @@ ArrowFlightConsumer::~ArrowFlightConsumer() {
 }
 
 void ArrowFlightConsumer::initialize() {
-	logger->log_study("Initializing");
-
 	const std::string vendpoints = utils::get_env_var_or_default(
 	    "PUBLISHER_ENDPOINTS",
 	    utils::get_env_var_or_default("CONSUMER_ENDPOINT", "localhost"));
@@ -104,7 +102,6 @@ void ArrowFlightConsumer::initialize() {
 	}
 
 	logger->log_info("[Flight Consumer] Consumer initialized.");
-	logger->log_study("Initialized");
 	log_configuration();
 }
 

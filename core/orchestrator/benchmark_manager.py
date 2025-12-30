@@ -13,6 +13,7 @@ from .scenario_config_manager import (
 from .scenario_manager import ScenarioManager
 from .technology_manager import get_technology_manager
 from .utils.logger import logger
+from datetime import datetime
 
 TECHNOLOGIES_DIR = "technologies"
 SCENARIOS_DIR = "test_scenarios"
@@ -111,11 +112,19 @@ class BenchmarkManager:
         logger.info(f"Setting up technology {tech_name}...")
         self.tm.setup_tech()
 
+        date_time = datetime.now().strftime("%Y%m%d_%H%M%S")
         scenario_name = ScenarioConfigManager.generate_scenario_name(scenario_config)
         metrics = MetricsCollector(
-            tech_name, scenario_name, self.scenario_name, interval=self.interval
+            tech_name,
+            scenario_name,
+            self.scenario_name,
+            date_time,
+            interval=self.interval,
         )
-        os.makedirs(os.path.join("logs", self.scenario_name, tech_name), exist_ok=True)
+        os.makedirs(
+            os.path.join("logs", self.scenario_name, tech_name, date_time),
+            exist_ok=True,
+        )
         try:
             logger.info(
                 f"Executing experiment for technology {tech_name} with scenario {scenario_name}..."
@@ -132,6 +141,7 @@ class BenchmarkManager:
                     "logs",
                     self.scenario_name,
                     tech_name,
+                    date_time,
                     f"{scenario_name}_{container}_scenarioconfig.json",
                 )
                 with open(config_file, "w", encoding="utf-8") as f:
@@ -149,6 +159,7 @@ class BenchmarkManager:
                     "logs",
                     self.scenario_name,
                     tech_name,
+                    date_time,
                     f"{scenario_name}_{container}_scenarioconfig.json",
                 )
                 with open(config_file, "w", encoding="utf-8") as f:
@@ -164,14 +175,14 @@ class BenchmarkManager:
             self.cm.wait_for_all()
             metrics.stop()
             events_logger = ContainerEventsLogger(
-                tech_name, scenario_name, self.scenario_name
+                tech_name, scenario_name, self.scenario_name, date_time
             )
             events_logger.collect_logs()
             events_logger.write_logs()
             for container in self.cm.containers:
                 if "broker" not in container.name:
                     self.tm.save_runtime_container_config(
-                        container, self.scenario_name, scenario_name
+                        container, self.scenario_name, scenario_name, date_time
                     )
 
         finally:
