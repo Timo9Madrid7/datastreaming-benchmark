@@ -224,13 +224,13 @@ void ArrowFlightPublisher::send_message(const Payload &message,
 	}
 
 	const bool is_term = (message.kind == PayloadKind::TERMINATION);
-	
+
 	for (const auto &log_entry : bb.publication_logs) {
 		logger->log_study(log_entry);
 	}
 
 	enqueue_batch_(ticket, batch, is_term);
-	
+
 	bb.reset();
 }
 
