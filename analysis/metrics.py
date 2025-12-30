@@ -77,10 +77,16 @@ def throughput_for_run(
     events = _load_event_log(run_dir)
     if events.is_empty():
         return pl.DataFrame()
+
+    # Anchor throughput to publications only (avoid double-counting and time-base mismatch)
+    events = events.filter(pl.col("event_type") == "Publication")
+    if events.is_empty():
+        return pl.DataFrame()
+
     min_ts = events.select(pl.col("timestamp").min()).item()
+    
     throughput = (
-        events.filter(pl.col("event_type") == "Publication")
-        .sort("timestamp")
+        events.sort("timestamp")
         # [t0, t0+window), [t0+1s, t0+1s+window), ...]
         .group_by_dynamic("timestamp", every="1s", period=f"{window_s}s", closed="left")
         .agg(pl.col("serialized_size").sum().alias("bytes"))
