@@ -28,8 +28,9 @@ def load_throughput(
     tech: str,
     run: str,
     window_s: int,
+    event_type: str,
 ) -> pl.DataFrame:
-    return throughput_for_run(scenario, tech, run, window_s)
+    return throughput_for_run(scenario, tech, run, window_s, event_type)
 
 
 @st.cache_data(show_spinner=False)
@@ -89,6 +90,11 @@ def main() -> None:
         value=min(10, duration_s),
         step=1,
     )
+    throughput_event_type = st.sidebar.selectbox(
+        "Throughput event type",
+        ["Publication", "Reception"],
+        index=0,
+    )
     show_individual = st.sidebar.checkbox("Show individual runs", value=False)
 
     st.header("Performance Summary")
@@ -110,7 +116,9 @@ def main() -> None:
         for run in runs_by_tech.get(tech, []):
             if run not in selected_runs:
                 continue
-            throughput = load_throughput(scenario, tech, run, window_s)
+            throughput = load_throughput(
+                scenario, tech, run, window_s, throughput_event_type
+            )
             if not throughput.is_empty():
                 run_frames.append(
                     throughput.with_columns(
@@ -199,11 +207,12 @@ def main() -> None:
     for column, tech in zip(kpi_columns, selected_techs):
         throughput_value, latency_value = kpi_data.get(tech, (0, 0))
         column.metric(
-            label=f"{tech} Avg Throughput (MB/s)", value=f"{throughput_value:,.2f}"
+            label=f"{tech} Avg {throughput_event_type} Throughput (MB/s)",
+            value=f"{throughput_value:,.2f}",
         )
         column.metric(label=f"{tech} P99 Latency (ms)", value=f"{latency_value:,.2f}")
 
-    st.header("Throughput (MB/s)")
+    st.header(f"{throughput_event_type} Throughput (MB/s)")
     throughput_display = (
         pl.concat(throughput_frames, how="vertical")
         if throughput_frames
@@ -214,9 +223,9 @@ def main() -> None:
             frame
             for tech in selected_techs
             for frame in [
-                load_throughput(scenario, tech, run, window_s).with_columns(
-                    pl.lit(tech).alias("tech"), pl.lit(run).alias("run")
-                )
+                load_throughput(
+                    scenario, tech, run, window_s, throughput_event_type
+                ).with_columns(pl.lit(tech).alias("tech"), pl.lit(run).alias("run"))
                 for run in runs_by_tech.get(tech, [])
                 if run in selected_runs
             ]
