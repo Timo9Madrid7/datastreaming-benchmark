@@ -41,7 +41,7 @@ void ArrowFlightConsumer::initialize() {
 	    utils::get_env_var_or_default("CONSUMER_PORT", "8815"));
 
 	const std::string string_num_threads =
-	    utils::get_env_var_or_default("THREADS", "4");
+	    utils::get_env_var_or_default("THREADS", "1");
 
 	const std::optional<std::string> vTickets = utils::get_env_var("TOPICS");
 	if (!vTickets || vTickets->empty()) {
@@ -57,7 +57,9 @@ void ArrowFlightConsumer::initialize() {
 
 	try {
 		const int num_threads = std::stoi(string_num_threads);
-		thread_pool_.reset(num_threads);
+		if (num_threads != thread_pool_.get_thread_count() && num_threads > 0) {
+			thread_pool_.reset(num_threads);
+		}
 	} catch (...) {
 		throw std::runtime_error("[Flight Consumer] Invalid THREADS value: "
 		                         + string_num_threads);

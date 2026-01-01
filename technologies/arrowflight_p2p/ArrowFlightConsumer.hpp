@@ -28,7 +28,7 @@ class ArrowFlightConsumer : public IConsumer {
 	int publisher_port_;
 
 	// FIXME: hardcoded number of threads, make it configurable
-	BS::pause_thread_pool thread_pool_{4};
+	BS::pause_thread_pool thread_pool_{1};
 
 	void consume_from_publisher_(const std::string &endpoint,
 	                             const std::string &ticket);
