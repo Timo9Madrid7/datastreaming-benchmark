@@ -179,11 +179,13 @@ class BenchmarkManager:
             )
             events_logger.collect_logs()
             events_logger.write_logs()
-            for container in self.cm.containers:
-                if "broker" not in container.name:
-                    self.tm.save_runtime_container_config(
-                        container, self.scenario_name, scenario_name, date_time
-                    )
+            
+            # # NOTE: Uncomment to save runtime container configs
+            # for container in self.cm.containers:
+            #     if "broker" not in container.name:
+            #         self.tm.save_runtime_container_config(
+            #             container, self.scenario_name, scenario_name, date_time
+            #         )
 
         finally:
             logger.info("Stopping and removing all containers...")
