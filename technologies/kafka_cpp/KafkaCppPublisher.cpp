@@ -141,6 +141,9 @@ void KafkaCppPublisher::send_message(const Payload &message,
 		logger->log_error("[Kafka Publisher] Produce failed: "
 		                  + RdKafka::err2str(err));
 	} else {
+		logger->log_study("Publication," + message.message_id + ","
+		                  + std::to_string(message.data_size) + "," + topic
+		                  + "," + std::to_string(serialized_size));
 		logger->log_debug("[Kafka Publisher] Message queued for topic: "
 		                  + topic);
 	}
