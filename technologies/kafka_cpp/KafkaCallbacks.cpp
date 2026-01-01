@@ -38,10 +38,10 @@ void KafkaDeliveryReportCb::dr_cb(RdKafka::Message& message) {
                             message.topic_name()
                         );
     } else {
-        logger_->log_study("Publication," + key_str + 
-                          "," + std::to_string(message.len()) +  
-                          "," + message.topic_name() + 
-                          "," + std::to_string(message.len())
-                        );
+        // logger_->log_study("Publication," + key_str + 
+        //                   "," + std::to_string(message.len()) +  
+        //                   "," + message.topic_name() + 
+        //                   "," + std::to_string(message.len())
+        //                 );
     }
 }
