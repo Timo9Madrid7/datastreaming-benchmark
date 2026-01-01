@@ -67,10 +67,12 @@ def throughput_for_run(
     tech: str,
     run: str,
     window_s: int,
+    event_type: str = "Publication",
     logs_root: str | Path = "logs",
 ) -> pl.DataFrame:
     cache_dir = get_cache_dir(scenario, logs_root)
-    cache_path = cache_dir / f"throughput_{tech}_{run}_{window_s}s.parquet"
+    event_label = event_type.lower()
+    cache_path = cache_dir / f"throughput_{tech}_{run}_{event_label}_{window_s}s.parquet"
     if cache_path.exists():
         return pl.read_parquet(cache_path)
     run_dir = get_run_dir(scenario, tech, run, logs_root)
@@ -78,8 +80,8 @@ def throughput_for_run(
     if events.is_empty():
         return pl.DataFrame()
 
-    # Anchor throughput to publications only (avoid double-counting and time-base mismatch)
-    events = events.filter(pl.col("event_type") == "Publication")
+    # Anchor throughput to selected event type (avoid double-counting and time-base mismatch)
+    events = events.filter(pl.col("event_type") == event_type)
     if events.is_empty():
         return pl.DataFrame()
 
