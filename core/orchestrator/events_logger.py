@@ -1,8 +1,10 @@
 import datetime
 import os
-from typing import Dict, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Dict, Iterable, Optional
 
 import docker
+from docker.models.containers import Container
 import polars as pl
 
 from .utils.logger import logger
@@ -50,18 +52,57 @@ class ContainerEventsLogger:
         logger.debug(
             f"Collecting logs from {len(containers)} containers for technology {self.tech_name} and scenario {self.scenario_name}..."
         )
-        for container in containers:
-            try:
-                logs = container.logs().decode("utf-8").strip().split("\n")
-                for log in logs:
-                    # else continue
-                    parsed = self._parse_log(log, container.name)
-                    if parsed:
-                        self.logs.append(parsed)
-            except Exception as e:
-                logger.error(
-                    f"Error collecting logs from container {container.id}: {e}"
-                )
+
+        if not containers:
+            return
+
+        max_workers = min(8, len(containers))
+        results: list[Dict] = []
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(self._collect_one_container, container): container
+                for container in containers
+            }
+            for future in as_completed(futures):
+                container = futures[future]
+                try:
+                    results.extend(future.result())
+                except Exception as e:
+                    logger.error(
+                        f"Error collecting logs from container {container.id}: {e}"
+                    )
+
+        self.logs = results
+
+    def _iter_container_logs(self, container: Container) -> Iterable[str]:
+        """Stream container logs line-by-line to avoid large decode+split overhead."""
+        stream = container.logs(
+            stdout=True,
+            stderr=True,
+            stream=True,
+        )
+        for chunk in stream:
+            if chunk is None:
+                continue
+            if isinstance(chunk, (bytes, bytearray)):
+                text = bytes(chunk).decode("utf-8", errors="replace")
+            else:
+                text = str(chunk)
+            for line in text.splitlines():
+                yield line
+
+    def _collect_one_container(self, container: Container) -> list[Dict]:
+        out: list[Dict] = []
+        for log_line in self._iter_container_logs(container):
+            if not log_line:
+                continue
+            line = log_line.strip()
+            if not line:
+                continue
+            parsed = self._parse_log(line, container.name)
+            if parsed:
+                out.append(parsed)
+        return out
 
     def write_logs(self) -> None:
         """Write collected logs to a Parquet file."""
@@ -70,6 +111,7 @@ class ContainerEventsLogger:
                 f"No logs to save for technology {self.tech_name} and scenario {self.scenario_name}."
             )
             return
+        os.makedirs(os.path.dirname(self.log_file), exist_ok=True)
         df = pl.DataFrame(self.logs)
         df.write_parquet(self.log_file)
         # with open(self.log_file, mode='w', encoding='utf-8') as file:
@@ -108,7 +150,7 @@ class ContainerEventsLogger:
                 "event_type": event_type_part,
                 "message_id": message_id_part,
                 "logical_size": (
-                    int(logical_size_part) if serialized_size_part is not None else None
+                    int(logical_size_part) if logical_size_part is not None else None
                 ),
                 "topic": topic_part,
                 "serialized_size": (
