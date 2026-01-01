@@ -240,7 +240,7 @@ def main() -> None:
                 tooltip=["time_s", "throughput_mb_s", "tech", "run"],
                 y_title="Throughput (MB/s)",
             ),
-            use_container_width=True,
+            width="stretch",
         )
 
     st.header("Latency (ms)")
@@ -257,7 +257,7 @@ def main() -> None:
             pl.col("p50_ms").round(2).alias("P50_avg"),
             pl.col("max_ms").round(2).alias("max_avg"),
         ).sort("P99_avg", descending=True)
-        st.dataframe(latency_table(latency_table_frame), use_container_width=True)
+        st.dataframe(latency_table(latency_table_frame), width="stretch")
 
     st.header("Resource Usage")
     cpu_display = (
@@ -346,11 +346,11 @@ def main() -> None:
     )
 
     st.subheader("CPU Usage")
-    st.altair_chart(cpu_chart, use_container_width=True)
+    st.altair_chart(cpu_chart, width="stretch")
     st.subheader("Memory Usage")
-    st.altair_chart(memory_chart, use_container_width=True)
+    st.altair_chart(memory_chart, width="stretch")
     st.subheader("Disk Throughput")
-    st.altair_chart(disk_chart, use_container_width=True)
+    st.altair_chart(disk_chart, width="stretch")
 
 
 if __name__ == "__main__":
