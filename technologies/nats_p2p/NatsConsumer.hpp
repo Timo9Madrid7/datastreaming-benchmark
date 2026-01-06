@@ -2,7 +2,6 @@
 
 #include <memory>
 #include <nats/nats.h>
-#include <string.h>
 #include <string>
 
 #include "IConsumer.hpp"

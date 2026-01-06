@@ -179,7 +179,7 @@ class BenchmarkManager:
             )
             events_logger.collect_logs()
             events_logger.write_logs()
-            
+
             # # NOTE: Uncomment to save runtime container configs
             # for container in self.cm.containers:
             #     if "broker" not in container.name:

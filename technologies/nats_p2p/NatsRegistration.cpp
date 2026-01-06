@@ -16,7 +16,7 @@ extern "C" void register_technology(std::shared_ptr<Logger> logger) {
 		    return std::make_unique<NatsConsumer>(logger);
 	    });
 	logger->log_debug(
-	    "[Arrow Flight Registration] Registered creators in factories");
+	    "[NATS P2P Registration] Registered creators in factories");
 	Factory<IPublisher>::debug_print_registry(logger);
 	Factory<IConsumer>::debug_print_registry(logger);
 }

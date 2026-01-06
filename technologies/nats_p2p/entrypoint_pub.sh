@@ -2,7 +2,7 @@
 set -e
 
 nats-server -a 0.0.0.0 -p 4222 &
-until ss -ltn | grep -q ":4222 "; do
+until ss -ltn | grep -Eq ':4222[[:space:]]'; do
   sleep 2
 done
 

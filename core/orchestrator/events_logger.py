@@ -1,7 +1,7 @@
 import os
 import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
-from typing import Dict, Iterable, Optional
+from typing import Iterable, Optional
 
 import docker
 from docker.models.containers import Container
@@ -158,7 +158,9 @@ class ContainerEventsLogger:
         marker = f"[{self.log_level}]"
         marker_len = len(marker)
 
-        logger.debug("Start collecting logs from container {} ({})", container.name, container.id)
+        logger.debug(
+            "Start collecting logs from container {} ({})", container.name, container.id
+        )
 
         for log_line in self._iter_container_logs(container):
             if not log_line or log_line.isspace():
@@ -173,7 +175,9 @@ class ContainerEventsLogger:
                 continue
 
             matched_lines += 1
-            parsed = self._parse_log(line, marker_index=marker_index, marker_len=marker_len)
+            parsed = self._parse_log(
+                line, marker_index=marker_index, marker_len=marker_len
+            )
             if parsed is not None:
                 (
                     timestamp_part,
@@ -235,7 +239,16 @@ class ContainerEventsLogger:
 
     def _parse_log(
         self, log_line: str, *, marker_index: int, marker_len: int
-    ) -> Optional[tuple[str, Optional[str], Optional[str], Optional[int], Optional[str], Optional[int]]]:
+    ) -> Optional[
+        tuple[
+            str,
+            Optional[str],
+            Optional[str],
+            Optional[int],
+            Optional[str],
+            Optional[int],
+        ]
+    ]:
         """
         Parse a single log line and extract relevant fields.
 
@@ -243,7 +256,7 @@ class ContainerEventsLogger:
             log_line (str): The log line to parse.
             marker_index (int): The index where the log level marker starts.
             marker_len (int): The length of the log level marker.
-            
+
         Returns:
             Optional[tuple]: A tuple containing the parsed fields, or None if parsing failed.
         """

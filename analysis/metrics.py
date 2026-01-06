@@ -72,7 +72,9 @@ def throughput_for_run(
 ) -> pl.DataFrame:
     cache_dir = get_cache_dir(scenario, logs_root)
     event_label = event_type.lower()
-    cache_path = cache_dir / f"throughput_{tech}_{run}_{event_label}_{window_s}s.parquet"
+    cache_path = (
+        cache_dir / f"throughput_{tech}_{run}_{event_label}_{window_s}s.parquet"
+    )
     if cache_path.exists():
         return pl.read_parquet(cache_path)
     run_dir = get_run_dir(scenario, tech, run, logs_root)
