@@ -126,7 +126,7 @@ def latency_stats_for_run(
     if events.is_empty():
         return pl.DataFrame()
 
-    # message_id is unique per publication-reception pair
+    # NOTE: publication-consumer is one-to-many
     publications = events.filter(pl.col("event_type") == "Publication").select(
         pl.col("message_id"),
         pl.col("timestamp").alias("pub_ts"),

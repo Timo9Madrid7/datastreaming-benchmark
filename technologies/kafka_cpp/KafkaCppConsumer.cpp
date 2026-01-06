@@ -92,8 +92,8 @@ void KafkaCppConsumer::initialize() {
 	}
 
 	// Throughput optimizations
-	conf_->set("fetch.min.bytes", "1048576", err_msg);
-	conf_->set("fetch.wait.max.ms", "500", err_msg);
+	conf_->set("fetch.min.bytes", "10000", err_msg);
+	conf_->set("fetch.wait.max.ms", "100", err_msg);
 
 	consumer_.reset(RdKafka::KafkaConsumer::create(conf_.get(), err_msg));
 

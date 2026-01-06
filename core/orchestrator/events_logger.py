@@ -1,8 +1,11 @@
 import datetime
 import os
-from typing import Dict, Optional
+import time
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from typing import Dict, Iterable, Optional
 
 import docker
+from docker.models.containers import Container
 import polars as pl
 
 from .utils.logger import logger
@@ -50,18 +53,134 @@ class ContainerEventsLogger:
         logger.debug(
             f"Collecting logs from {len(containers)} containers for technology {self.tech_name} and scenario {self.scenario_name}..."
         )
-        for container in containers:
-            try:
-                logs = container.logs().decode("utf-8").strip().split("\n")
-                for log in logs:
-                    # else continue
-                    parsed = self._parse_log(log, container.name)
-                    if parsed:
-                        self.logs.append(parsed)
-            except Exception as e:
-                logger.error(
-                    f"Error collecting logs from container {container.id}: {e}"
+
+        if not containers:
+            return
+
+        max_workers = min(8, len(containers))
+        started = time.perf_counter()
+        results: list[Dict] = []
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(self._collect_one_container, container): container
+                for container in containers
+            }
+
+            completed = 0
+            pending = set(futures.keys())
+            last_heartbeat = started
+
+            while pending:
+                done, pending = wait(pending, timeout=5.0, return_when=FIRST_COMPLETED)
+
+                now = time.perf_counter()
+                if not done and now - last_heartbeat >= 10.0:
+                    elapsed_s = now - started
+                    logger.info(
+                        "Collecting logs... completed={}/{}, pending={}, total_records={}, elapsed={:.1f}s",
+                        completed,
+                        len(containers),
+                        len(pending),
+                        len(results),
+                        elapsed_s,
+                    )
+                    last_heartbeat = now
+
+                for future in done:
+                    container = futures[future]
+                    try:
+                        container_results = future.result()
+                        results.extend(container_results)
+                        completed += 1
+                        elapsed_s = time.perf_counter() - started
+                        logger.debug(
+                            "Collected {}/{} containers (last={}, +{} records). Total records={}. Elapsed={:.1f}s",
+                            completed,
+                            len(containers),
+                            container.name,
+                            len(container_results),
+                            len(results),
+                            elapsed_s,
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"Error collecting logs from container {container.id}: {e}"
+                        )
+
+        self.logs = results
+        logger.info(
+            "Finished collecting logs from {} containers. Parsed records={}. Total time={:.1f}s",
+            len(containers),
+            len(self.logs),
+            time.perf_counter() - started,
+        )
+
+    def _iter_container_logs(self, container: Container) -> Iterable[str]:
+        """Stream container logs line-by-line to avoid large decode+split overhead."""
+        stream = container.logs(
+            stdout=True,
+            stderr=True,
+            stream=True,
+            follow=False,
+        )
+        for chunk in stream:
+            if chunk is None:
+                continue
+            if isinstance(chunk, (bytes, bytearray)):
+                text = bytes(chunk).decode("utf-8", errors="replace")
+            else:
+                text = str(chunk)
+            for line in text.splitlines():
+                yield line
+
+    def _collect_one_container(self, container: Container) -> list[Dict]:
+        out: list[Dict] = []
+        started = time.perf_counter()
+        last_progress = started
+        total_lines = 0
+        matched_lines = 0
+
+        logger.debug("Start collecting logs from container {} ({})", container.name, container.id)
+
+        for log_line in self._iter_container_logs(container):
+            if not log_line:
+                continue
+
+            total_lines += 1
+            line = log_line.strip()
+            if not line:
+                continue
+
+            # Cheap pre-filter so we can report progress even if parsing is slow
+            if self.log_level in line:
+                matched_lines += 1
+
+            parsed = self._parse_log(line, container.name)
+            if parsed:
+                out.append(parsed)
+
+            now = time.perf_counter()
+            if now - last_progress >= 5.0:
+                elapsed_s = now - started
+                logger.debug(
+                    "Progress container {}: lines={}, matched={}, parsed={}, elapsed={:.1f}s",
+                    container.name,
+                    total_lines,
+                    matched_lines,
+                    len(out),
+                    elapsed_s,
                 )
+                last_progress = now
+
+        logger.debug(
+            "Done collecting container {}: lines={}, matched={}, parsed={}, elapsed={:.1f}s",
+            container.name,
+            total_lines,
+            matched_lines,
+            len(out),
+            time.perf_counter() - started,
+        )
+        return out
 
     def write_logs(self) -> None:
         """Write collected logs to a Parquet file."""
@@ -70,6 +189,7 @@ class ContainerEventsLogger:
                 f"No logs to save for technology {self.tech_name} and scenario {self.scenario_name}."
             )
             return
+        os.makedirs(os.path.dirname(self.log_file), exist_ok=True)
         df = pl.DataFrame(self.logs)
         df.write_parquet(self.log_file)
         # with open(self.log_file, mode='w', encoding='utf-8') as file:
@@ -108,7 +228,7 @@ class ContainerEventsLogger:
                 "event_type": event_type_part,
                 "message_id": message_id_part,
                 "logical_size": (
-                    int(logical_size_part) if serialized_size_part is not None else None
+                    int(logical_size_part) if logical_size_part is not None else None
                 ),
                 "topic": topic_part,
                 "serialized_size": (

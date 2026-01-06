@@ -41,7 +41,7 @@ void ArrowFlightConsumer::initialize() {
 	    utils::get_env_var_or_default("CONSUMER_PORT", "8815"));
 
 	const std::string string_num_threads =
-	    utils::get_env_var_or_default("THREADS", "1");
+	    utils::get_env_var_or_default("THREADS", "4");
 
 	const std::optional<std::string> vTickets = utils::get_env_var("TOPICS");
 	if (!vTickets || vTickets->empty()) {
