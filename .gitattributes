@@ -1,0 +1,14 @@
+# Normalize text files, but enforce per-type line endings where needed.
+#
+# Key goal: keep shell scripts LF even on Windows.
+
+* text=auto
+
+# Shell scripts must be LF (avoids /bin/sh^M issues in containers)
+*.sh text eol=lf
+
+# Batch files should be CRLF on Windows
+*.bat text eol=crlf
+
+# (Optional) PowerShell scripts are typically CRLF
+*.ps1 text eol=crlf
