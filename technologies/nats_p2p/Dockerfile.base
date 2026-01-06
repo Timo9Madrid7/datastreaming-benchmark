@@ -1,0 +1,20 @@
+# Expected name: nats_p2p_base
+FROM core_base
+
+# Install NATS C client
+RUN git clone --depth 1 https://github.com/nats-io/nats.c.git /tmp/nats.c \
+    && cmake -S /tmp/nats.c -B /tmp/nats.c/build -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build /tmp/nats.c/build -j \
+    && cmake --install /tmp/nats.c/build \
+    && ldconfig \
+    && rm -rf /tmp/nats.c
+
+RUN mkdir -p /app/technologies/nats_p2p
+COPY ./technologies/nats_p2p /app/technologies/nats_p2p
+
+# Build the project (assumes /app has the repo sources and /app/build exists in core_base)
+RUN cd /app/build && cmake .. && cmake --build .
+
+# Move shared lib into /app/lib
+RUN mkdir -p /app/lib \
+    && cp /app/build/technologies/nats_p2p/libnats_p2p_technology.so /app/lib/
