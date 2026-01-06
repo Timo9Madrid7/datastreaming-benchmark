@@ -1,10 +1,13 @@
 #pragma once
 
 #include <memory>
-#include <nats.h>
+#include <nats/nats.h>
+#include <string>
 
 #include "IPublisher.hpp"
-#include "Logger.hpp"
+
+class Logger;
+struct Payload;
 
 class NatsPublisher : public IPublisher {
   public:
@@ -17,6 +20,8 @@ class NatsPublisher : public IPublisher {
 	void log_configuration() override;
 
   private:
-	std::unique_ptr<natsConnection> connection_;
+	using NatsConnectionPtr =
+	    std::unique_ptr<natsConnection, decltype(&natsConnection_Destroy)>;
+	NatsConnectionPtr connection_;
 	std::string nats_url_;
 };

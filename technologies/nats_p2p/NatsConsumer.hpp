@@ -1,12 +1,13 @@
 #pragma once
 
 #include <memory>
-#include <nats.h>
+#include <nats/nats.h>
 #include <string.h>
+#include <string>
 
 #include "IConsumer.hpp"
-#include "Logger.hpp"
 
+class Logger;
 struct Payload;
 
 class NatsConsumer : public IConsumer {
@@ -22,7 +23,12 @@ class NatsConsumer : public IConsumer {
 	void log_configuration() override;
 
   private:
-	std::unique_ptr<natsConnection> connection_;
-	std::unique_ptr<natsSubscription> subscription_;
+	using NatsConnectionPtr =
+	    std::unique_ptr<natsConnection, decltype(&natsConnection_Destroy)>;
+	using NatsSubscriptionPtr =
+	    std::unique_ptr<natsSubscription, decltype(&natsSubscription_Destroy)>;
+	NatsConnectionPtr connection_;
+	NatsSubscriptionPtr subscription_;
+
 	std::string nats_url_;
 };

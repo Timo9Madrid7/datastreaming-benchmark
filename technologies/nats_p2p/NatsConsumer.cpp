@@ -1,8 +1,8 @@
 #include "NatsConsumer.hpp"
 
-#include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <nats/status.h>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -11,6 +11,7 @@
 #include <utility>
 #include <vector>
 
+#include "Logger.hpp"
 #include "Payload.hpp"
 #include "Utils.hpp"
 
@@ -22,31 +23,18 @@ std::string build_nats_url(const std::string &endpoint,
 	}
 	return "nats://" + endpoint + ":" + port;
 }
-
-void destroy_subscription(std::unique_ptr<natsSubscription> &subscription) {
-	if (!subscription)
-		return;
-	natsSubscription_Destroy(subscription.get());
-	subscription.release();
-}
-
-void destroy_connection(std::unique_ptr<natsConnection> &connection) {
-	if (!connection)
-		return;
-	natsConnection_Destroy(connection.get());
-	connection.release();
-}
 } // namespace
 
 NatsConsumer::NatsConsumer(std::shared_ptr<Logger> logger)
-    : IConsumer(logger) {
+    : IConsumer(logger), connection_(nullptr, &natsConnection_Destroy),
+      subscription_(nullptr, &natsSubscription_Destroy) {
 	logger->log_info("[NATS Consumer] NatsConsumer created.");
 }
 
 NatsConsumer::~NatsConsumer() {
 	logger->log_debug("[NATS Consumer] Cleaning up NATS consumer...");
-	destroy_subscription(subscription_);
-	destroy_connection(connection_);
+	subscription_.reset();
+	connection_.reset();
 	logger->log_debug("[NATS Consumer] Destructor finished.");
 }
 
@@ -57,26 +45,19 @@ void NatsConsumer::initialize() {
 		    "[NATS Consumer] Missing required environment variable TOPICS.");
 	}
 
-	const std::optional<std::string> vurl = utils::get_env_var("NATS_URL");
-	if (vurl && !vurl->empty()) {
-		nats_url_ = vurl.value();
-	} else {
-		const std::string endpoints = utils::get_env_var_or_default(
-		    "CONSUMER_ENDPOINT", "localhost");
-		std::string endpoint;
-		std::istringstream endpoints_stream(endpoints);
-		std::getline(endpoints_stream, endpoint, ',');
-		if (endpoint.empty()) {
-			throw std::runtime_error(
-			    "[NATS Consumer] CONSUMER_ENDPOINT is empty.");
-		}
-
-		const std::string port = utils::get_env_var_or_default(
-		    "NATS_PORT",
-		    utils::get_env_var_or_default("CONSUMER_PORT", "4222"));
-
-		nats_url_ = build_nats_url(endpoint, port);
+	const std::string port =
+	    utils::get_env_var_or_default("CONSUMER_PORT", "4222");
+	const std::string vendpoints = utils::get_env_var_or_default(
+	    "PUBLISHER_ENDPOINTS",
+	    utils::get_env_var_or_default("CONSUMER_ENDPOINT", "localhost"));
+	std::string endpoint;
+	std::istringstream endpoints_stream(vendpoints);
+	// FIXME: Only use the first endpoint from the list
+	std::getline(endpoints_stream, endpoint, ',');
+	if (endpoint.empty()) {
+		throw std::runtime_error("[NATS Consumer] CONSUMER_ENDPOINT is empty.");
 	}
+	nats_url_ = build_nats_url(endpoint, port);
 
 	std::unordered_set<std::string> unique_topics;
 	std::string topic;
@@ -97,18 +78,17 @@ void NatsConsumer::initialize() {
 	natsConnection *conn = nullptr;
 	natsStatus status = natsConnection_ConnectTo(&conn, nats_url_.c_str());
 	if (status != NATS_OK) {
-		throw std::runtime_error(
-		    "[NATS Consumer] Failed to connect: "
-		    + std::string(natsStatus_GetText(status)));
+		throw std::runtime_error("[NATS Consumer] Failed to connect: "
+		                         + std::string(natsStatus_GetText(status)));
 	}
 	connection_.reset(conn);
 
 	natsSubscription *sub = nullptr;
+	// TODO: Subscribe to each topic separately
 	status = natsConnection_SubscribeSync(&sub, conn, ">");
 	if (status != NATS_OK) {
-		throw std::runtime_error(
-		    "[NATS Consumer] Failed to subscribe: "
-		    + std::string(natsStatus_GetText(status)));
+		throw std::runtime_error("[NATS Consumer] Failed to subscribe: "
+		                         + std::string(natsStatus_GetText(status)));
 	}
 	subscription_.reset(sub);
 
@@ -173,23 +153,6 @@ bool NatsConsumer::deserialize(const void *raw_message, size_t len,
 }
 
 void NatsConsumer::start_loop() {
-	const std::optional<std::string> vtopics = utils::get_env_var("TOPICS");
-	if (!vtopics || vtopics->empty()) {
-		logger->log_error("[NATS Consumer] No topics to subscribe.");
-		return;
-	}
-
-	std::unordered_set<std::string> allowed_topics;
-	std::string topic;
-	std::istringstream topics_stream(vtopics.value());
-	while (std::getline(topics_stream, topic, ',')) {
-		if (!topic.empty()) {
-			allowed_topics.insert(topic);
-		}
-	}
-
-	std::unordered_set<std::string> completed_topics;
-
 	while (true) {
 		natsMsg *msg = nullptr;
 		natsStatus status =
@@ -209,12 +172,6 @@ void NatsConsumer::start_loop() {
 		const char *subject = natsMsg_GetSubject(msg);
 		const std::string subject_str = subject ? subject : "";
 
-		if (!allowed_topics.empty()
-		    && allowed_topics.find(subject_str) == allowed_topics.end()) {
-			natsMsg_Destroy(msg);
-			continue;
-		}
-
 		Payload payload;
 		const void *data_ptr = natsMsg_GetData(msg);
 		const size_t data_len = static_cast<size_t>(natsMsg_GetDataLength(msg));
@@ -228,17 +185,12 @@ void NatsConsumer::start_loop() {
 		const size_t total_size = sizeof(uint16_t) + payload.message_id.size()
 		    + sizeof(uint8_t) + sizeof(size_t) + payload.data_size;
 
-		logger->log_info("[NATS Consumer] Received message ID: "
-		                 + payload.message_id + ", Size: "
-		                 + std::to_string(payload.data_size) + " bytes");
 		logger->log_study("Reception," + payload.message_id + ","
 		                  + std::to_string(payload.data_size) + ","
 		                  + subject_str + "," + std::to_string(total_size));
 
 		if (payload.message_id.find(TERMINATION_SIGNAL) != std::string::npos) {
-			if (completed_topics.insert(subject_str).second) {
-				subscribed_streams.dec();
-			}
+			subscribed_streams.dec();
 			logger->log_info(
 			    "[NATS Consumer] Termination signal received for topic: "
 			    + subject_str);
@@ -248,9 +200,8 @@ void NatsConsumer::start_loop() {
 				natsMsg_Destroy(msg);
 				break;
 			}
-			logger->log_info(
-			    "[NATS Consumer] Remaining subscribed streams: "
-			    + std::to_string(subscribed_streams.get()));
+			logger->log_info("[NATS Consumer] Remaining subscribed streams: "
+			                 + std::to_string(subscribed_streams.get()));
 		}
 
 		natsMsg_Destroy(msg);

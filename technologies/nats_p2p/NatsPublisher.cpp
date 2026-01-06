@@ -1,12 +1,13 @@
 #include "NatsPublisher.hpp"
 
-#include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <optional>
+#include <nats/status.h>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
+#include "Logger.hpp"
 #include "Payload.hpp"
 #include "Utils.hpp"
 
@@ -18,48 +19,34 @@ std::string build_nats_url(const std::string &endpoint,
 	}
 	return "nats://" + endpoint + ":" + port;
 }
-
-void destroy_connection(std::unique_ptr<natsConnection> &connection) {
-	if (!connection)
-		return;
-	natsConnection_Destroy(connection.get());
-	connection.release();
-}
 } // namespace
 
 NatsPublisher::NatsPublisher(std::shared_ptr<Logger> logger)
-    : IPublisher(logger) {
+    : IPublisher(logger), connection_(nullptr, &natsConnection_Destroy) {
 	logger->log_info("[NATS Publisher] NatsPublisher created.");
 }
 
 NatsPublisher::~NatsPublisher() {
 	logger->log_debug("[NATS Publisher] Cleaning up NATS publisher...");
-	destroy_connection(connection_);
+	connection_.reset();
 	logger->log_debug("[NATS Publisher] Destructor finished.");
 }
 
 void NatsPublisher::initialize() {
-	const std::optional<std::string> vurl = utils::get_env_var("NATS_URL");
-	if (vurl && !vurl->empty()) {
-		nats_url_ = vurl.value();
-	} else {
-		std::string endpoint = utils::get_env_var_or_default(
-		    "PUBLISHER_ENDPOINT", "127.0.0.1");
-		if (endpoint == "0.0.0.0") {
-			endpoint = "127.0.0.1";
-		}
-		const std::string port = utils::get_env_var_or_default(
-		    "NATS_PORT",
-		    utils::get_env_var_or_default("PUBLISHER_PORT", "4222"));
-		nats_url_ = build_nats_url(endpoint, port);
+	std::string endpoint =
+	    utils::get_env_var_or_default("PUBLISHER_ENDPOINT", "127.0.0.1");
+	if (endpoint == "0.0.0.0") {
+		endpoint = "127.0.0.1"; // NATS server and producer on same machine
 	}
+	const std::string port =
+	    utils::get_env_var_or_default("PUBLISHER_PORT", "4222");
+	nats_url_ = build_nats_url(endpoint, port);
 
 	natsConnection *conn = nullptr;
 	natsStatus status = natsConnection_ConnectTo(&conn, nats_url_.c_str());
 	if (status != NATS_OK) {
-		throw std::runtime_error(
-		    "[NATS Publisher] Failed to connect: "
-		    + std::string(natsStatus_GetText(status)));
+		throw std::runtime_error("[NATS Publisher] Failed to connect: "
+		                         + std::string(natsStatus_GetText(status)));
 	}
 	connection_.reset(conn);
 
@@ -91,9 +78,8 @@ bool NatsPublisher::serialize(const Payload &message, void *out) {
 }
 
 void NatsPublisher::send_message(const Payload &message, std::string &subject) {
-	const size_t serialized_size = sizeof(uint16_t)
-	    + message.message_id.size() + sizeof(uint8_t) + sizeof(size_t)
-	    + message.data_size;
+	const size_t serialized_size = sizeof(uint16_t) + message.message_id.size()
+	    + sizeof(uint8_t) + sizeof(size_t) + message.data_size;
 	std::string serialized(serialized_size, '\0');
 	if (!serialize(message, serialized.data())) {
 		logger->log_error(
