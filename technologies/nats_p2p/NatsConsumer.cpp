@@ -76,11 +76,28 @@ void NatsConsumer::initialize() {
 	}
 
 	natsConnection *conn = nullptr;
-	natsStatus status = natsConnection_ConnectTo(&conn, nats_url_.c_str());
-	if (status != NATS_OK) {
-		throw std::runtime_error("[NATS Consumer] Failed to connect: "
-		                         + std::string(natsStatus_GetText(status)));
-	}
+	natsStatus status = NATS_OK;
+
+	constexpr int kMaxAttempts = 60; // 60 * 500ms = 30s
+    for (int attempt = 1; attempt <= kMaxAttempts; ++attempt) {
+        status = natsConnection_ConnectTo(&conn, nats_url_.c_str());
+        if (status == NATS_OK) {
+            break;
+        }
+
+        logger->log_info(
+            "[NATS Consumer] Connect attempt " + std::to_string(attempt) + "/"
+            + std::to_string(kMaxAttempts) + " failed to " + nats_url_ + ": "
+            + std::string(natsStatus_GetText(status)));
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+
+    if (status != NATS_OK) {
+        throw std::runtime_error("[NATS Consumer] Failed to connect to " + nats_url_
+                                 + ": " + std::string(natsStatus_GetText(status)));
+    }
+
 	connection_.reset(conn);
 
 	natsSubscription *sub = nullptr;
