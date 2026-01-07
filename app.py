@@ -83,9 +83,9 @@ def main() -> None:
 
     window_s = st.sidebar.slider(
         "Throughput window size (seconds)",
-        min_value=10,
-        max_value=max(10, duration_s),
-        value=min(10, duration_s),
+        min_value=1,
+        max_value=10,
+        value=10,
         step=1,
     )
     throughput_event_type = st.sidebar.selectbox(
