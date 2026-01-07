@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-nats-server -a 0.0.0.0 -p 4222 &
+nats-server -a 0.0.0.0 -p 4222 -c /app/technologies/nats_p2p/nats.config &
 until ss -ltn | grep -Eq ':4222[[:space:]]'; do
   sleep 2
 done

@@ -1,17 +1,18 @@
 #include "NatsConsumer.hpp"
 
+#include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <nats/nats.h>
 #include <nats/status.h>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <unordered_set>
 #include <utility>
 #include <vector>
-#include <thread>
-#include <chrono>
 
 #include "Logger.hpp"
 #include "Payload.hpp"
@@ -81,24 +82,25 @@ void NatsConsumer::initialize() {
 	natsStatus status = NATS_OK;
 
 	constexpr int kMaxAttempts = 60; // 60 * 500ms = 30s
-    for (int attempt = 1; attempt <= kMaxAttempts; ++attempt) {
-        status = natsConnection_ConnectTo(&conn, nats_url_.c_str());
-        if (status == NATS_OK) {
-            break;
-        }
+	for (int attempt = 1; attempt <= kMaxAttempts; ++attempt) {
+		status = natsConnection_ConnectTo(&conn, nats_url_.c_str());
+		if (status == NATS_OK) {
+			break;
+		}
 
-        logger->log_info(
-            "[NATS Consumer] Connect attempt " + std::to_string(attempt) + "/"
-            + std::to_string(kMaxAttempts) + " failed to " + nats_url_ + ": "
-            + std::string(natsStatus_GetText(status)));
+		logger->log_info(
+		    "[NATS Consumer] Connect attempt " + std::to_string(attempt) + "/"
+		    + std::to_string(kMaxAttempts) + " failed to " + nats_url_ + ": "
+		    + std::string(natsStatus_GetText(status)));
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
-    }
+		std::this_thread::sleep_for(std::chrono::milliseconds(500));
+	}
 
-    if (status != NATS_OK) {
-        throw std::runtime_error("[NATS Consumer] Failed to connect to " + nats_url_
-                                 + ": " + std::string(natsStatus_GetText(status)));
-    }
+	if (status != NATS_OK) {
+		throw std::runtime_error("[NATS Consumer] Failed to connect to "
+		                         + nats_url_ + ": "
+		                         + std::string(natsStatus_GetText(status)));
+	}
 
 	connection_.reset(conn);
 
@@ -109,6 +111,15 @@ void NatsConsumer::initialize() {
 		throw std::runtime_error("[NATS Consumer] Failed to subscribe: "
 		                         + std::string(natsStatus_GetText(status)));
 	}
+
+	status =
+	    natsSubscription_SetPendingLimits(sub, 500 * 1000, 1024 * 1024 * 1024);
+	if (status != NATS_OK) {
+		throw std::runtime_error(
+		    "[NATS Consumer] Failed to set pending limits: "
+		    + std::string(natsStatus_GetText(status)));
+	}
+
 	subscription_.reset(sub);
 
 	logger->log_info("[NATS Consumer] Consumer initialized.");
