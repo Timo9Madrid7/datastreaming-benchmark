@@ -1,5 +1,6 @@
 import json
 import os
+from datetime import datetime
 from typing import Dict, List, Optional, Union
 
 from .container_manager import ContainerManager
@@ -13,7 +14,6 @@ from .scenario_config_manager import (
 from .scenario_manager import ScenarioManager
 from .technology_manager import get_technology_manager
 from .utils.logger import logger
-from datetime import datetime
 
 TECHNOLOGIES_DIR = "technologies"
 SCENARIOS_DIR = "test_scenarios"
