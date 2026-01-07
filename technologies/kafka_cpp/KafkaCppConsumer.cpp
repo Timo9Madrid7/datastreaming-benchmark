@@ -55,6 +55,8 @@ void KafkaCppConsumer::initialize() {
 		throw std::runtime_error(err_msg);
 	}
 
+	const std::string group_id = "benchmark_group_" + consumer_id.value();
+
 	conf_.reset(RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL));
 	if (!conf_) {
 		err_msg = "[Kafka Consumer] Failed to create global config.";
@@ -69,7 +71,7 @@ void KafkaCppConsumer::initialize() {
 		throw std::runtime_error("Failed to set bootstrap.servers: " + err_msg);
 	}
 
-	if (conf_->set("group.id", "benchmark_group", err_msg)
+	if (conf_->set("group.id", group_id, err_msg)
 	    != RdKafka::Conf::CONF_OK) {
 		logger->log_error("[Kafka Consumer] Failed to set group.id: "
 		                  + err_msg);
