@@ -5,7 +5,8 @@ set -e
 # Using the container IP avoids Docker DNS edge-cases (e.g., underscores in names).
 BROKER_IP="$(hostname -i | awk '{print $1}')"
 if [ -z "$BROKER_IP" ]; then
-  BROKER_IP="127.0.0.1"
+  echo "ERROR: Could not determine container IP address." >&2
+  exit 1
 fi
 
 # Patch KRaft config for this container instance.
