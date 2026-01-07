@@ -14,6 +14,8 @@ class ContainerManager:
     def __init__(self, network_name="benchmark_network") -> None:
         self.client = docker.from_env()
         self.containers: List[Container] = []
+        self.publisher_containers: List[Container] = []
+        self.consumer_containers: List[Container] = []
         try:
             self.network = self.client.networks.get(network_name)
             self.network_name = network_name
@@ -26,6 +28,8 @@ class ContainerManager:
         """Reset the container manager state between experiments."""
         self.topics_map = {}
         self.containers = []
+        self.publisher_containers = []
+        self.consumer_containers = []
 
     def topics_and_publishers_lists(
         self, topic_filter: List[str]
@@ -226,6 +230,7 @@ class ContainerManager:
             if paused:
                 self._pause_safely(container)
             self.containers.append(container)
+            self.publisher_containers.append(container)
             logger.debug(f"Created container {container.name}")
         except DockerException as e:
             raise ValueError(f"Failed to start publisher {pub_id}") from e
@@ -291,6 +296,7 @@ class ContainerManager:
             if paused:
                 self._pause_safely(container)
             self.containers.append(container)
+            self.consumer_containers.append(container)
             logger.debug(f"Created container {container.name}")
         except DockerException as e:
             raise ValueError(f"Failed to start consumer {con_id}") from e
@@ -340,6 +346,12 @@ class ContainerManager:
         """Waits for all containers to finish."""
         logger.debug("Waiting for all containers to finish...")
         for container in self.containers:
+            container.wait()
+            
+    def wait_for_consumers(self) -> None:
+        """Waits for all consumer containers to finish."""
+        logger.debug("Waiting for all consumer containers to finish...")
+        for container in self.consumer_containers:
             container.wait()
 
     @validate_container
