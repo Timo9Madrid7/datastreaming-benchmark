@@ -1,0 +1,19 @@
+# Expected name: kafka_p2p_base
+# Kafka C++ Base Dockerfile
+FROM core_base
+
+# Install Kafka-specific dependencies
+RUN apt-get update && apt-get install -y \
+    librdkafka-dev \
+    liblz4-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /app/technologies
+RUN mkdir -p /app/technologies/kafka_p2p
+COPY ./technologies/kafka_p2p /app/technologies/kafka_p2p
+
+# Build the kafka-specific library
+RUN cd /app/build && cmake .. && cmake --build .
+
+# Move shared lib into /app/lib
+RUN mkdir -p /app/lib && cp /app/build/technologies/kafka_p2p/libkafka_p2p_technology.so /app/lib/
