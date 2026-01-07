@@ -18,7 +18,6 @@
 #include "Payload.hpp"
 #include "Utils.hpp"
 
-
 namespace {
 std::string build_nats_url(const std::string &endpoint,
                            const std::string &port) {
@@ -114,7 +113,7 @@ void NatsConsumer::initialize() {
 	}
 
 	status =
-	    natsSubscription_SetPendingLimits(sub, 500 * 1000, 512 * 1024 * 1024);
+	    natsSubscription_SetPendingLimits(sub, 500 * 1000, 1024 * 1024 * 1024);
 	if (status != NATS_OK) {
 		throw std::runtime_error(
 		    "[NATS Consumer] Failed to set pending limits: "
