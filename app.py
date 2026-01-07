@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import polars as pl
 import streamlit as st
-
 from analysis.data_loader import discover_scenarios, infer_duration_seconds_from_logs
 from analysis.metrics import (
     average_curve,
@@ -12,7 +11,6 @@ from analysis.metrics import (
     throughput_for_run,
 )
 from analysis.visuals import latency_table, line_chart
-
 
 st.set_page_config(page_title="Benchmark Analysis", layout="wide")
 

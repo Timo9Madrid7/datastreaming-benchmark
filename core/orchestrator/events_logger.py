@@ -4,8 +4,8 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from typing import Iterable, Optional
 
 import docker
-from docker.models.containers import Container
 import polars as pl
+from docker.models.containers import Container
 
 from .utils.logger import logger
 
