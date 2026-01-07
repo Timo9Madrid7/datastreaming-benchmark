@@ -55,12 +55,12 @@ class ContainerManager:
 
         Args:
             container (Container): The Docker container instance to pause.
-            timeout (int, optional): Timeout in seconds for the pause operation. Defaults to 10.
+            timeout_s (int, optional): Timeout_s in seconds for the pause operation. Defaults to 10.
         """
         deadline = time.time() + timeout_s
         while time.time() < deadline:
             container.reload()
-            status = container.status or None
+            status = container.status
 
             if status == "running":
                 try:
