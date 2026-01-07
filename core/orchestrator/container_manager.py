@@ -347,7 +347,7 @@ class ContainerManager:
         logger.debug("Waiting for all containers to finish...")
         for container in self.containers:
             container.wait()
-            
+
     def wait_for_consumers(self) -> None:
         """Waits for all consumer containers to finish."""
         logger.debug("Waiting for all consumer containers to finish...")
