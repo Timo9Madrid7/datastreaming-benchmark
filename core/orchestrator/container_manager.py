@@ -16,6 +16,7 @@ class ContainerManager:
         self.containers: List[Container] = []
         self.publisher_containers: List[Container] = []
         self.consumer_containers: List[Container] = []
+        self.p2p = True
         try:
             self.network = self.client.networks.get(network_name)
             self.network_name = network_name
@@ -30,6 +31,7 @@ class ContainerManager:
         self.containers = []
         self.publisher_containers = []
         self.consumer_containers = []
+        self.p2p = True
 
     def topics_and_publishers_lists(
         self, topic_filter: List[str]
@@ -284,6 +286,7 @@ class ContainerManager:
             else:
                 logger.debug(f"Using tech-specific broker benchmark_{tech_name}_broker")
                 environment["CONSUMER_ENDPOINT"] = "benchmark_" + tech_name + "_broker"
+                self.p2p = False
 
             container = self.client.containers.run(
                 name=f"{tech_name}-{con_id}",
@@ -345,8 +348,11 @@ class ContainerManager:
     def wait_for_all(self) -> None:
         """Waits for all containers to finish."""
         logger.debug("Waiting for all containers to finish...")
-        for container in self.containers:
-            container.wait()
+        if self.p2p:
+            self.wait_for_consumers()
+        else:
+            for container in self.containers:
+                container.wait()
 
     def wait_for_consumers(self) -> None:
         """Waits for all consumer containers to finish."""

@@ -172,8 +172,7 @@ class BenchmarkManager:
             logger.info("All containers started. Unpausing...")
             self.cm.wake_all()
             logger.info("Containers unpaused. Collecting metrics...")
-            # self.cm.wait_for_all()
-            self.cm.wait_for_consumers()
+            self.cm.wait_for_all()
             metrics.stop()
             events_logger = ContainerEventsLogger(
                 tech_name, scenario_name, self.scenario_name, date_time
