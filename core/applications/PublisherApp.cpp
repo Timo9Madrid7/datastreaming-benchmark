@@ -215,8 +215,7 @@ void PublisherApp::run() {
 
 	logger->log_info("[PublisherApp] Terminating");
 	terminate_all_topics();
-	// Give some time for messages to be received before exiting
-	sleep_time = 8000; // milliseconds
+	// Give some time for messages to be sent before exiting
 	std::this_thread::sleep_for(std::chrono::milliseconds(sleep_time));
 	logger->log_info("[PublisherApp] Terminated");
 }
