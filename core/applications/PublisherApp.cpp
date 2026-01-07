@@ -16,7 +16,6 @@
 #include "Utils.hpp"
 #include "cstdlib"
 
-
 Payload PublisherApp::generate_message(int i) {
 	Payload message = pick_random_payload();
 	return Payload::reuse_with_new_id(id, i, message);
@@ -271,5 +270,11 @@ int main(int argc, char *argv[]) {
 	} catch (...) {
 		std::cerr << "[PublisherApp] Unknown exception caught!" << std::endl;
 	}
+
+	// sleep if producer and broker are on the same machine to allow
+	// all messages to be sent before the application exits
+	int sleep_time = 5000; // milliseconds
+	std::this_thread::sleep_for(std::chrono::milliseconds(sleep_time));
+
 	return 0;
 }
