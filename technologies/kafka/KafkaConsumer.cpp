@@ -89,7 +89,7 @@ void KafkaConsumer::initialize() {
 		throw std::runtime_error(err_msg);
 	}
 
-	std::string group_id = "benchmark_group_" + consumer_id.value();
+	const std::string group_id = "benchmark_group_" + consumer_id.value();
 
 	char errstr[512];
 	conf_ = rd_kafka_conf_new();
