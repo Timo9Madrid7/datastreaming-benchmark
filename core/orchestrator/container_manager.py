@@ -1,7 +1,9 @@
+import time
 from functools import wraps
 from typing import Callable, List, Optional, Tuple
 
 import docker
+from docker.errors import APIError, DockerException, NotFound
 from docker.models.containers import Container
 
 from .utils.logger import logger
@@ -11,11 +13,11 @@ class ContainerManager:
 
     def __init__(self, network_name="benchmark_network") -> None:
         self.client = docker.from_env()
-        self.containers = []
+        self.containers: List[Container] = []
         try:
             self.network = self.client.networks.get(network_name)
             self.network_name = network_name
-        except docker.errors.NotFound:
+        except NotFound:
             self.network = self.client.networks.create(network_name, driver="bridge")
             self.network_name = network_name
         self.topics_map = {}
@@ -46,6 +48,54 @@ class ContainerManager:
                 topics_list.append(topic)
                 publishers_list.append(publisher)
         return topics_list, publishers_list
+
+    def _pause_safely(self, container: Container, *, timeout_s: int = 10) -> None:
+        """
+        Safely pause a container, handling potential exceptions.
+
+        Args:
+            container (Container): The Docker container instance to pause.
+            timeout (int, optional): Timeout in seconds for the pause operation. Defaults to 10.
+        """
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            container.reload()
+            status = container.status or None
+
+            if status == "running":
+                try:
+                    container.pause()
+                    return
+                except APIError:
+                    # Can still race with runtime; retry briefly.
+                    time.sleep(0.1)
+                    continue
+
+            if status in ("exited", "dead"):
+                try:
+                    tail = container.logs(tail=200).decode("utf-8", errors="replace")
+                except Exception:
+                    tail = "<failed to read container logs>"
+                raise ValueError(
+                    f"Container '{container.name}' exited before pause(). status={status}\n"
+                    f"--- last 200 log lines ---\n{tail}"
+                )
+
+            # created/restarting/paused/unknown -> wait a bit
+            time.sleep(0.1)
+
+        # Timed out: do one last reload + attempt
+        container.reload()
+        if container.status != "running":
+            raise ValueError(
+                f"Timed out waiting to pause container '{container.name}'. status={container.status}"
+            )
+        try:
+            container.pause()
+        except Exception as e:
+            raise ValueError(
+                f"Failed to pause container '{container.name}': {e}"
+            ) from e
 
     @staticmethod
     def return_container_ids(method) -> Callable:
@@ -174,10 +224,10 @@ class ContainerManager:
                 command=[mode],
             )
             if paused:
-                container.pause()
+                self._pause_safely(container)
             self.containers.append(container)
             logger.debug(f"Created container {container.name}")
-        except docker.errors.DockerException as e:
+        except DockerException as e:
             raise ValueError(f"Failed to start publisher {pub_id}") from e
         for topic in topics:
             if topic not in self.topics_map:
@@ -239,10 +289,10 @@ class ContainerManager:
                 command=[mode],
             )
             if paused:
-                container.pause()
+                self._pause_safely(container)
             self.containers.append(container)
             logger.debug(f"Created container {container.name}")
-        except docker.errors.DockerException as e:
+        except DockerException as e:
             raise ValueError(f"Failed to start consumer {con_id}") from e
         return container.name
 
