@@ -12,9 +12,16 @@ fi
 # Patch KRaft config for this container instance.
 sed -i "s|^advertised.listeners=.*|advertised.listeners=PLAINTEXT://${BROKER_IP}:9092,CONTROLLER://${BROKER_IP}:9093|" /app/technologies/kafka_p2p/server.properties
 
-KAFKA_CLUSTER_ID="$(/opt/kafka/bin/kafka-storage.sh random-uuid)" && \
-/opt/kafka/bin/kafka-storage.sh format -t "$KAFKA_CLUSTER_ID" -c /app/technologies/kafka_p2p/server.properties \
-&& /opt/kafka/bin/kafka-server-start.sh -daemon /app/technologies/kafka_p2p/server.properties &
+# Cap Kafka broker heap to avoid unbounded memory use in constrained environments.
+export KAFKA_HEAP_OPTS="${KAFKA_HEAP_OPTS:--Xms1024m -Xmx1024m}"
+
+# Initialize and start KRaft Kafka broker.
+KAFKA_CLUSTER_ID="$(/opt/kafka/bin/kafka-storage.sh random-uuid)"
+/opt/kafka/bin/kafka-storage.sh format -t "$KAFKA_CLUSTER_ID" -c /app/technologies/kafka_p2p/server.properties
+
+/opt/kafka/bin/kafka-server-start.sh -daemon /app/technologies/kafka_p2p/server.properties
+
+# Wait for Kafka broker to be available.
 until ss -ltn | grep -Eq ':9092[[:space:]]'; do
   sleep 2
 done
