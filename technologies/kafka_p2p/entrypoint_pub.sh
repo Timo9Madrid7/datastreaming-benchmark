@@ -23,7 +23,7 @@ KAFKA_CLUSTER_ID="$(/opt/kafka/bin/kafka-storage.sh random-uuid)"
 
 # Wait for Kafka broker to be available.
 until ss -ltn | grep -Eq ':9092[[:space:]]'; do
-  sleep 2
+  sleep 0.2
 done
 
 if [ $# -eq 0 ]; then

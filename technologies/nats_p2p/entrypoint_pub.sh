@@ -3,7 +3,7 @@ set -e
 
 nats-server -a 0.0.0.0 -p 4222 -c /app/technologies/nats_p2p/nats.config -l /tmp/nats.log &
 until ss -ltn | grep -Eq ':4222[[:space:]]'; do
-  sleep 2
+  sleep 0.2
 done
 
 if [ $# -eq 0 ]; then
