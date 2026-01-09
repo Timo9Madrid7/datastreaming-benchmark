@@ -92,7 +92,7 @@ void KafkaCppConsumer::initialize() {
 		throw std::runtime_error("Failed to set auto.offset.reset: " + err_msg);
 	}
 
-	// Throughput optimizations
+	// Low Latency Configuration
 	conf_->set("fetch.min.bytes", "16384", err_msg);
 	conf_->set("fetch.wait.max.ms", "5", err_msg);
 	conf_->set("max.partition.fetch.bytes", "1048576", err_msg);

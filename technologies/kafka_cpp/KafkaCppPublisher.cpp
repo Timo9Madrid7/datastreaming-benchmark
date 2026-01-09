@@ -68,7 +68,7 @@ void KafkaCppPublisher::initialize() {
 		throw std::runtime_error("Failed to set bootstrap.servers: " + errstr);
 	}
 
-	// Throughput Optimizations
+	// Producer performance configuration (latency/throughput trade-offs)
 	conf_->set("acks", "1", errstr);
 	conf_->set("linger.ms", "1", errstr);
 	conf_->set("batch.size", "262144", errstr);
