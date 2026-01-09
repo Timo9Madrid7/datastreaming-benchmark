@@ -240,11 +240,8 @@ void NatsConsumer::start_loop() {
 			continue;
 		}
 
-		const size_t total_size = sizeof(uint16_t) + payload.message_id.size()
-		    + sizeof(uint8_t) + sizeof(size_t) + payload.data_size;
-
 		logger->log_study("Reception," + payload.message_id + ",-1,"
-		                  + subject_str + "," + std::to_string(total_size));
+		                  + subject_str + "," + std::to_string(data_len));
 
 		if (payload.message_id.find(TERMINATION_SIGNAL) != std::string::npos) {
 			subscribed_streams.dec();
