@@ -62,6 +62,31 @@ bool ZeroMQP2PConsumer::deserialize(const void *raw_message, size_t len,
 	return true;
 }
 
+bool ZeroMQP2PConsumer::deserialize_id(const void *raw_message, size_t len,
+                                       Payload &out) {
+	const char *data = static_cast<const char *>(raw_message);
+	size_t offset = 0;
+
+	// Topic length & Topic and skip over it
+	uint8_t topic_len;
+	std::memcpy(&topic_len, data + offset, sizeof(uint8_t));
+	offset += sizeof(uint8_t);
+	offset += topic_len;
+
+	// Message ID length
+	uint16_t id_len;
+	std::memcpy(&id_len, data + offset, sizeof(uint16_t));
+	offset += sizeof(uint16_t);
+
+	// Message ID
+	std::string message_id(data + offset, id_len);
+	offset += id_len;
+
+	out.message_id = message_id;
+
+	return true;
+}
+
 ZeroMQP2PConsumer::ZeroMQP2PConsumer(std::shared_ptr<Logger> logger) try
     : IConsumer(logger), context(1), subscriber(context, ZMQ_SUB) {
 	subscriber.set(zmq::sockopt::rcvtimeo, 10000);
@@ -184,7 +209,8 @@ void ZeroMQP2PConsumer::start_loop() {
 			const void *data_ptr = zmq_message.data();
 			const size_t data_size = zmq_message.size();
 
-			if (deserialize(data_ptr, data_size, payload) == false) {
+			if ( //! deserialize(data_ptr, data_size, payload)
+			    !deserialize_id(data_ptr, data_size, payload)) {
 				logger->log_error(
 				    "[ZeroMQP2P Consumer] Deserialization failed");
 				continue;
@@ -196,11 +222,7 @@ void ZeroMQP2PConsumer::start_loop() {
 			                      + sizeof(uint8_t),
 			                  topic_len);
 
-			logger->log_info("[ZeroMQP2P Consumer] Received message ID: "
-			                 + payload.message_id + ", Size: "
-			                 + std::to_string(payload.data_size) + " bytes");
-			logger->log_study("Reception," + payload.message_id + ","
-			                  + std::to_string(payload.data_size) + "," + topic
+			logger->log_study("Reception," + payload.message_id + ",-1," + topic
 			                  + "," + std::to_string(zmq_message.size()));
 
 			if (payload.message_id.find(TERMINATION_SIGNAL)

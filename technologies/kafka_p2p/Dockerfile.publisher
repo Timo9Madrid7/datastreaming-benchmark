@@ -9,6 +9,8 @@ RUN apt-get update && apt-get install -y openjdk-17-jre-headless && \
     mv /opt/kafka_2.13-4.1.1 /opt/kafka && \
     rm /tmp/kafka.tgz 
 
+RUN chmod +x /app/technologies/kafka_p2p/entrypoint_pub.sh
+
 # Set working directory
 WORKDIR /app/build/core/applications
 

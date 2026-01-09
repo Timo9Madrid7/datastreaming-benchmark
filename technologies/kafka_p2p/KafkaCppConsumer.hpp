@@ -17,6 +17,7 @@ class KafkaCppConsumer : public IConsumer {
 	void start_loop() override;
 	bool deserialize(const void *raw_message, size_t len,
 	                 Payload &out) override;
+	bool deserialize_id(const void *raw_message, size_t len, Payload &out);
 	void log_configuration() override;
 
   private:

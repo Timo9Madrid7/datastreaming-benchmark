@@ -215,6 +215,25 @@ bool KafkaConsumer::deserialize(const void *raw_message, size_t len,
 	return true;
 }
 
+bool KafkaConsumer::deserialize_id(const void *raw_message, size_t len,
+                                   Payload &out) {
+	const char *data = static_cast<const char *>(raw_message);
+	size_t offset = 0;
+
+	// Message ID Length
+	uint16_t id_len;
+	std::memcpy(&id_len, data + offset, sizeof(id_len));
+	offset += sizeof(id_len);
+
+	// Message ID
+	std::string message_id(data + offset, id_len);
+
+	out.message_id = message_id;
+	out.data_size = 0;
+
+	return true;
+}
+
 void KafkaConsumer::start_loop() {
 	while (true) {
 		logger->log_debug("[Kafka Consumer] Polling for messages...");
@@ -246,7 +265,9 @@ void KafkaConsumer::start_loop() {
 		logger->log_info("[Kafka Consumer] Received message on topic '" + topic
 		                 + "' with " + std::to_string(msg->len) + " bytes");
 
-		if (deserialize(msg->payload, msg->len, payload) == false) {
+		if (
+		    // !deserialize(msg->payload, msg->len, payload)
+		    !deserialize_id(msg->payload, msg->len, payload)) {
 			logger->log_error("[Kafka Consumer] Deserialization failed for "
 			                  "message on topic: "
 			                  + topic);
@@ -254,8 +275,7 @@ void KafkaConsumer::start_loop() {
 			continue;
 		}
 
-		logger->log_study("Reception," + payload.message_id + ","
-		                  + std::to_string(payload.data_size) + "," + topic
+		logger->log_study("Reception," + payload.message_id + ",-1," + topic
 		                  + "," + std::to_string(msg->len));
 		rd_kafka_message_destroy(msg);
 

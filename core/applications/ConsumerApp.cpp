@@ -1,13 +1,11 @@
 #include "ConsumerApp.hpp"
 
-#include <chrono>
 #include <exception>
 #include <iostream>
 #include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
-#include <thread>
 
 #include "Factory.hpp"
 #include "IConsumer.hpp"
@@ -49,8 +47,6 @@ void ConsumerApp::create_consumer() {
 void ConsumerApp::run() {
 	logger->log_info("[ConsumerApp] Initializing");
 	consumer->initialize();
-	int sleep_time = 4000; // milliseconds
-
 	std::optional<std::string> technology = utils::get_env_var("TECHNOLOGY");
 	if (!technology) {
 		std::string err_msg =
@@ -58,15 +54,7 @@ void ConsumerApp::run() {
 		logger->log_error(err_msg);
 		throw std::runtime_error(err_msg);
 	}
-
-	if (technology.value().find("p2p") == std::string::npos) {
-		// Give some time for the broker&producer to initialize
-		logger->log_info("[ConsumerApp] Wait " + std::to_string(sleep_time)
-		                 + "ms for initialization");
-		std::this_thread::sleep_for(std::chrono::milliseconds(sleep_time));
-	}
 	logger->log_info("[ConsumerApp] Initialized");
-
 	logger->log_info("[ConsumerApp] Start receiving loop");
 	consumer->start_loop(); // technology-specific start receiving loop
 }
