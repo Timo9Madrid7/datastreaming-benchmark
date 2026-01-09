@@ -182,6 +182,33 @@ bool NatsConsumer::deserialize(const void *raw_message, size_t len,
 	return true;
 }
 
+bool NatsConsumer::deserialize_id(const void *raw_message, size_t len,
+                                  Payload &out) {
+	const char *data = static_cast<const char *>(raw_message);
+	size_t offset = 0;
+
+	if (len < sizeof(uint16_t) + sizeof(uint8_t) + sizeof(size_t)) {
+		logger->log_error("[NATS Consumer] Message too short to deserialize.");
+		return false;
+	}
+
+	uint16_t id_len = 0;
+	std::memcpy(&id_len, data + offset, sizeof(id_len));
+	offset += sizeof(id_len);
+
+	if (len < offset + id_len + sizeof(uint8_t) + sizeof(size_t)) {
+		logger->log_error(
+		    "[NATS Consumer] Invalid message: id length out of bounds.");
+		return false;
+	}
+
+	std::string message_id(data + offset, id_len);
+
+	out.message_id = std::move(message_id);
+
+	return true;
+}
+
 void NatsConsumer::start_loop() {
 	while (true) {
 		natsMsg *msg = nullptr;
@@ -206,7 +233,8 @@ void NatsConsumer::start_loop() {
 		const void *data_ptr = natsMsg_GetData(msg);
 		const size_t data_len = static_cast<size_t>(natsMsg_GetDataLength(msg));
 
-		if (!deserialize(data_ptr, data_len, payload)) {
+		if ( //! deserialize(data_ptr, data_len, payload)
+		    !deserialize_id(data_ptr, data_len, payload)) {
 			logger->log_error("[NATS Consumer] Deserialization failed.");
 			natsMsg_Destroy(msg);
 			continue;
@@ -215,8 +243,7 @@ void NatsConsumer::start_loop() {
 		const size_t total_size = sizeof(uint16_t) + payload.message_id.size()
 		    + sizeof(uint8_t) + sizeof(size_t) + payload.data_size;
 
-		logger->log_study("Reception," + payload.message_id + ","
-		                  + std::to_string(payload.data_size) + ","
+		logger->log_study("Reception," + payload.message_id + ",-1,"
 		                  + subject_str + "," + std::to_string(total_size));
 
 		if (payload.message_id.find(TERMINATION_SIGNAL) != std::string::npos) {

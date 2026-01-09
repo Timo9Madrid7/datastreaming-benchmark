@@ -206,6 +206,89 @@ void ArrowFlightConsumer::consume_from_publisher_(const std::string &endpoint,
 	subscribed_streams.dec();
 }
 
+void ArrowFlightConsumer::consume_id_from_publisher_(
+    const std::string &endpoint, const std::string &ticket) {
+	subscribed_streams.inc();
+
+	auto loc_res =
+	    arrow::flight::Location::ForGrpcTcp(endpoint, publisher_port_);
+	if (!loc_res.ok()) {
+		logger->log_error("[Flight Consumer] ForGrpcTcp failed: "
+		                  + loc_res.status().ToString());
+		subscribed_streams.dec();
+		return;
+	}
+
+	auto client_res = arrow::flight::FlightClient::Connect(*loc_res);
+	if (!client_res.ok()) {
+		logger->log_error("[Flight Consumer] Connect failed to " + endpoint
+		                  + ":" + std::to_string(publisher_port_) + " : "
+		                  + client_res.status().ToString());
+		subscribed_streams.dec();
+		return;
+	}
+	auto client = std::move(client_res).ValueOrDie();
+
+	arrow::flight::Ticket t{ticket};
+	auto reader_res = client->DoGet(t);
+	if (!reader_res.ok()) {
+		logger->log_error("[Flight Consumer] DoGet failed ticket=" + ticket
+		                  + " from " + endpoint + " : "
+		                  + reader_res.status().ToString());
+		subscribed_streams.dec();
+		return;
+	}
+	auto reader = std::move(reader_res).ValueOrDie();
+
+	while (true) {
+		auto chunk = reader->Next();
+		if (!chunk.ok()) {
+			logger->log_error("[Flight Consumer] Next() failed ticket=" + ticket
+			                  + " from " + endpoint + " : "
+			                  + chunk.status().ToString());
+			break;
+		}
+
+		auto batch = chunk->data;
+		if (!batch)
+			break;
+
+		// [message_id, kind, data]
+		if (batch->num_columns() < 3) {
+			logger->log_error("[Flight Consumer] Invalid batch schema: "
+			                  "expected >= 3 columns");
+			break;
+		}
+
+		auto message_id_column =
+		    std::static_pointer_cast<arrow::StringArray>(batch->column(0));
+		auto data_column =
+		    std::static_pointer_cast<arrow::BinaryArray>(batch->column(2));
+
+		for (int64_t i = 0; i < batch->num_rows(); ++i) {
+			std::string message_id = message_id_column->GetString(i);
+			size_t row_size = message_id_column->value_length(i)
+			    + sizeof(uint8_t) + data_column->value_length(i);
+
+			logger->log_study("Reception," + message_id + ",-1," + ticket + ","
+			                  + std::to_string(row_size));
+
+			if (message_id.find(TERMINATION_SIGNAL) != std::string::npos) {
+				logger->log_info(
+				    "[Flight Consumer] Received termination for ticket="
+				    + ticket + " from publisher=" + endpoint);
+				subscribed_streams.dec();
+				return;
+			}
+		}
+	}
+
+	logger->log_info(
+	    "[Flight Consumer] Stream ended without termination. ticket=" + ticket
+	    + " publisher=" + endpoint);
+	subscribed_streams.dec();
+}
+
 void ArrowFlightConsumer::start_loop() {
 	logger->log_info(
 	    "[Flight Consumer] Starting client loops (thread pool)...");
@@ -219,7 +302,7 @@ void ArrowFlightConsumer::start_loop() {
 		                 + " ticket=" + ticket);
 
 		thread_pool_.detach_task([this, publisher, ticket]() {
-			consume_from_publisher_(publisher, ticket);
+			consume_id_from_publisher_(publisher, ticket);
 		});
 	}
 	thread_pool_.wait();
@@ -249,6 +332,7 @@ void ArrowFlightConsumer::log_configuration() {
 
 	logger->log_config("[CONFIG] TOPICS="
 	                   + utils::get_env_var_or_default("TOPICS", ""));
-	logger->log_config("[CONFIG] THREADS=4");
+	logger->log_config("[CONFIG] THREADS="
+	                   + utils::get_env_var_or_default("THREADS", ""));
 	logger->log_config("[Flight Consumer] [CONFIG_END]");
 }

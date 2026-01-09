@@ -71,8 +71,7 @@ void KafkaCppConsumer::initialize() {
 		throw std::runtime_error("Failed to set bootstrap.servers: " + err_msg);
 	}
 
-	if (conf_->set("group.id", group_id, err_msg)
-	    != RdKafka::Conf::CONF_OK) {
+	if (conf_->set("group.id", group_id, err_msg) != RdKafka::Conf::CONF_OK) {
 		logger->log_error("[Kafka Consumer] Failed to set group.id: "
 		                  + err_msg);
 		throw std::runtime_error("Failed to set group.id: " + err_msg);
@@ -190,6 +189,25 @@ bool KafkaCppConsumer::deserialize(const void *raw_message, size_t len,
 	return true;
 }
 
+bool KafkaCppConsumer::deserialize_id(const void *raw_message, size_t len,
+                                      Payload &out) {
+	const char *data = static_cast<const char *>(raw_message);
+	size_t offset = 0;
+
+	// Message ID Length
+	uint16_t id_len;
+	std::memcpy(&id_len, data + offset, sizeof(id_len));
+	offset += sizeof(id_len);
+
+	// Message ID
+	std::string message_id(data + offset, id_len);
+	offset += id_len;
+
+	out.message_id = message_id;
+
+	return true;
+}
+
 void KafkaCppConsumer::start_loop() {
 	while (true) {
 		logger->log_debug("[Kafka Consumer] Polling for messages...");
@@ -232,15 +250,15 @@ void KafkaCppConsumer::start_loop() {
 		logger->log_info("[Kafka Consumer] Received message on topic '" + topic
 		                 + "' with " + std::to_string(msg->len()) + " bytes");
 
-		if (deserialize(msg->payload(), msg->len(), payload) == false) {
+		if ( // !deserialize(msg->payload, msg->len, payload)
+		    !deserialize_id(msg->payload(), msg->len(), payload)) {
 			logger->log_error("[Kafka Consumer] Deserialization failed for "
 			                  "message on topic: "
 			                  + topic);
 			continue;
 		}
 
-		logger->log_study("Reception," + payload.message_id + ","
-		                  + std::to_string(payload.data_size) + "," + topic
+		logger->log_study("Reception," + payload.message_id + ",-1," + topic
 		                  + "," + std::to_string(msg->len()));
 
 		if (payload.message_id.find(TERMINATION_SIGNAL) != std::string::npos) {
