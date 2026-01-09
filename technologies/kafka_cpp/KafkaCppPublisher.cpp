@@ -70,12 +70,11 @@ void KafkaCppPublisher::initialize() {
 
 	// Throughput Optimizations
 	conf_->set("acks", "1", errstr);
-	conf_->set("linger.ms", "100", errstr);
-	conf_->set("batch.size", "65536", errstr);
-	conf_->set("batch.num.messages", "10000", errstr);
+	conf_->set("linger.ms", "5", errstr);
+	conf_->set("batch.size", "4194304", errstr);
+	conf_->set("batch.num.messages", "20000", errstr);
 	conf_->set("compression.type", "lz4", errstr);
-	conf_->set("queue.buffering.max.messages", "200000", errstr);
-	conf_->set("queue.buffering.max.kbytes", "262144", errstr);
+	conf_->set("queue.buffering.max.kbytes", "1048576", errstr);
 
 	producer_.reset(RdKafka::Producer::create(conf_.get(), errstr));
 
@@ -135,8 +134,6 @@ void KafkaCppPublisher::send_message(const Payload &message,
 	    const_cast<char *>(serialized.data()), serialized.size(),
 	    message.message_id.c_str(), message.message_id.size(), 0, nullptr);
 
-	producer_->poll(0);
-
 	if (err != RdKafka::ERR_NO_ERROR) {
 		logger->log_error("[Kafka Publisher] Produce failed: "
 		                  + RdKafka::err2str(err));
@@ -146,6 +143,13 @@ void KafkaCppPublisher::send_message(const Payload &message,
 		                  + "," + std::to_string(serialized_size));
 		logger->log_debug("[Kafka Publisher] Message queued for topic: "
 		                  + topic);
+	}
+
+	// Poll less often to reduce per-message overhead (still drives delivery
+	// reports)
+	static thread_local uint32_t poll_every = 0;
+	if ((++poll_every % 1000u) == 0u) {
+		producer_->poll(0);
 	}
 }
 

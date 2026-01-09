@@ -62,6 +62,7 @@ test_scenarios/complete_tests.json
 test_scenarios/quick_test.json
 benchmark_scenarios.json
 build_all_images.bat
+clean_log_tech.bat
 analyses/.ipynb_checkpoints/resources_stats-checkpoint.ipynb
 test_scenarios/complete_tests.json
 test_scenarios/quick_test.json
