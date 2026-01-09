@@ -138,15 +138,29 @@ void ArrowFlightConsumer::consume_from_publisher_(const std::string &endpoint,
 	auto client = std::move(client_res).ValueOrDie();
 
 	arrow::flight::Ticket t{ticket};
-	auto reader_res = client->DoGet(t);
-	if (!reader_res.ok()) {
+	std::unique_ptr<arrow::flight::FlightStreamReader> reader;
+
+	constexpr int kMaxAttempts = 60; // 60 * 500ms = 30s
+	for (int attempt = 1; attempt <= kMaxAttempts; ++attempt) {
+		auto reader_res = client->DoGet(t);
+		if (reader_res.ok()) {
+			reader = std::move(reader_res).ValueOrDie();
+			break;
+		}
+
+		logger->log_info(
+		    "[Flight Consumer] DoGet attempt " + std::to_string(attempt) + "/"
+		    + std::to_string(kMaxAttempts) + " failed for ticket=" + ticket
+		    + " from " + endpoint + " : " + reader_res.status().ToString());
+		std::this_thread::sleep_for(std::chrono::milliseconds(500));
+	}
+	if (!reader) {
 		logger->log_error("[Flight Consumer] DoGet failed ticket=" + ticket
-		                  + " from " + endpoint + " : "
-		                  + reader_res.status().ToString());
+		                  + " from " + endpoint + " after "
+		                  + std::to_string(kMaxAttempts) + " attempts.");
 		subscribed_streams.dec();
 		return;
 	}
-	auto reader = std::move(reader_res).ValueOrDie();
 
 	while (true) {
 		auto chunk = reader->Next();
@@ -230,15 +244,29 @@ void ArrowFlightConsumer::consume_id_from_publisher_(
 	auto client = std::move(client_res).ValueOrDie();
 
 	arrow::flight::Ticket t{ticket};
-	auto reader_res = client->DoGet(t);
-	if (!reader_res.ok()) {
+	std::unique_ptr<arrow::flight::FlightStreamReader> reader;
+
+	constexpr int kMaxAttempts = 60; // 60 * 500ms = 30s
+	for (int attempt = 1; attempt <= kMaxAttempts; ++attempt) {
+		auto reader_res = client->DoGet(t);
+		if (reader_res.ok()) {
+			reader = std::move(reader_res).ValueOrDie();
+			break;
+		}
+
+		logger->log_info(
+		    "[Flight Consumer] DoGet attempt " + std::to_string(attempt) + "/"
+		    + std::to_string(kMaxAttempts) + " failed for ticket=" + ticket
+		    + " from " + endpoint + " : " + reader_res.status().ToString());
+		std::this_thread::sleep_for(std::chrono::milliseconds(500));
+	}
+	if (!reader) {
 		logger->log_error("[Flight Consumer] DoGet failed ticket=" + ticket
-		                  + " from " + endpoint + " : "
-		                  + reader_res.status().ToString());
+		                  + " from " + endpoint + " after "
+		                  + std::to_string(kMaxAttempts) + " attempts.");
 		subscribed_streams.dec();
 		return;
 	}
-	auto reader = std::move(reader_res).ValueOrDie();
 
 	while (true) {
 		auto chunk = reader->Next();
