@@ -222,10 +222,7 @@ void ZeroMQP2PConsumer::start_loop() {
 			                      + sizeof(uint8_t),
 			                  topic_len);
 
-			logger->log_info("[ZeroMQP2P Consumer] Received message ID: "
-			                 + payload.message_id + ", Size: "
-			                 + std::to_string(payload.data_size) + " bytes");
-			logger->log_study("Reception," + payload.message_id + ",-1" + topic
+			logger->log_study("Reception," + payload.message_id + ",-1," + topic
 			                  + "," + std::to_string(zmq_message.size()));
 
 			if (payload.message_id.find(TERMINATION_SIGNAL)

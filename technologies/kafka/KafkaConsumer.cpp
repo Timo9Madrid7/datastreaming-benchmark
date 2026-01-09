@@ -275,8 +275,8 @@ void KafkaConsumer::start_loop() {
 			continue;
 		}
 
-		logger->log_study("Reception," + payload.message_id + "-1," + topic
-		                  + std::to_string(msg->len));
+		logger->log_study("Reception," + payload.message_id + ",-1," + topic
+		                  + "," + std::to_string(msg->len));
 		rd_kafka_message_destroy(msg);
 
 		if (payload.message_id.find(TERMINATION_SIGNAL) != std::string::npos) {
