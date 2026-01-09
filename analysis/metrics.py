@@ -42,7 +42,7 @@ def _load_resource_metrics(run_dir: Path) -> pl.DataFrame:
     frames: list[pl.DataFrame] = []
     for csv_file in csv_files:
         # indicate different containers
-        source = csv_file.stem.rsplit("-", 1)[-1] if "-" in csv_file.stem else "Broker"
+        source = csv_file.stem.rsplit("-", 1)[-1] if "broker" not in csv_file.stem else "Broker"
         frames.append(
             pl.read_csv(csv_file).with_columns(
                 pl.lit(source).alias("source"),
