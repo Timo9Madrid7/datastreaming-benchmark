@@ -1,6 +1,7 @@
 #include "NatsConsumer.hpp"
 
 #include <chrono>
+#include <climits>
 #include <cstdint>
 #include <cstring>
 #include <nats/nats.h>
@@ -113,7 +114,7 @@ void NatsConsumer::initialize() {
 	}
 
 	status =
-	    natsSubscription_SetPendingLimits(sub, 500 * 1000, 1024 * 1024 * 1024);
+	    natsSubscription_SetPendingLimits(sub, 500 * 1000,  INT_MAX);
 	if (status != NATS_OK) {
 		throw std::runtime_error(
 		    "[NATS Consumer] Failed to set pending limits: "
