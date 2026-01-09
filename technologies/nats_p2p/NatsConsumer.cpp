@@ -113,8 +113,8 @@ void NatsConsumer::initialize() {
 		                         + std::string(natsStatus_GetText(status)));
 	}
 
-	status =
-	    natsSubscription_SetPendingLimits(sub, 500 * 1000,  INT_MAX);
+	// maximize pending limits to avoid message drops
+	status = natsSubscription_SetPendingLimits(sub, 500 * 1000, INT_MAX);
 	if (status != NATS_OK) {
 		throw std::runtime_error(
 		    "[NATS Consumer] Failed to set pending limits: "
