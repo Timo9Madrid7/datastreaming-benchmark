@@ -122,7 +122,7 @@ void KafkaCppPublisher::send_message(const Payload &message,
 	    + sizeof(size_t)                      // Data size
 	    + message.data_size;                  // Data
 	std::string serialized(serialized_size, '\0');
-	if (serialize(message, serialized.data()) == false) {
+	if (!serialize(message, serialized.data())) {
 		logger->log_error(
 		    "[Kafka Publisher] Serialization failed for message ID: "
 		    + message.message_id);
