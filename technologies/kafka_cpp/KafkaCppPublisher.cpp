@@ -70,11 +70,11 @@ void KafkaCppPublisher::initialize() {
 
 	// Throughput Optimizations
 	conf_->set("acks", "1", errstr);
-	conf_->set("linger.ms", "5", errstr);
-	conf_->set("batch.size", "4194304", errstr);
-	conf_->set("batch.num.messages", "20000", errstr);
-	conf_->set("compression.type", "lz4", errstr);
-	conf_->set("queue.buffering.max.kbytes", "1048576", errstr);
+	conf_->set("linger.ms", "1", errstr);
+	conf_->set("batch.size", "262144", errstr);
+	conf_->set("batch.num.messages", "10000", errstr);
+	conf_->set("compression.type", "none", errstr);
+	conf_->set("queue.buffering.max.kbytes", "65536", errstr);
 
 	producer_.reset(RdKafka::Producer::create(conf_.get(), errstr));
 
