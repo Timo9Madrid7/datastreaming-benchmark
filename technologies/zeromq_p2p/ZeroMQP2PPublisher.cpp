@@ -18,7 +18,7 @@ bool ZeroMQP2PPublisher::serialize(const Payload &message, std::string topic,
 	// Topic
 	std::memcpy(ptr, topic.data(), topic_len);
 	ptr += topic_len;
-	
+
 	// Payload serialization
 	if (!Payload::serialize(message, ptr)) {
 		logger->log_error(
@@ -70,6 +70,8 @@ void ZeroMQP2PPublisher::initialize() {
 void ZeroMQP2PPublisher::send_message(const Payload &message,
                                       std::string &topic) {
 	try {
+		logger->log_study("Serializing," + message.message_id + "," + topic);
+
 		size_t total_size = sizeof(uint8_t) // Topic Length
 		    + topic.size()                  // Topic
 		    + sizeof(uint16_t)              // Message ID Length
@@ -94,8 +96,8 @@ void ZeroMQP2PPublisher::send_message(const Payload &message,
 		    + std::to_string(publisher.get(zmq::sockopt::events)));
 
 	} catch (const zmq::error_t &e) {
-		logger->log_study("DeliveryError" + message.message_id + ","
-		                  + std::to_string(message.data_size) + "," + topic);
+		logger->log_study("DeliveryError" + message.message_id + "," + topic
+		                  + "," + std::to_string(message.data_size));
 	}
 }
 

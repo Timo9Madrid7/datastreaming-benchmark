@@ -1,27 +1,32 @@
 #include "ZeroMQP2PConsumer.hpp"
 
 #include <cstdlib>
+#include <cstring>
+#include <memory>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <sys/types.h>
+#include <thread>
 #include <unordered_set>
 #include <utility>
+#include <zmq.h>
 #include <zmq.hpp>
 
 #include "Payload.hpp"
 #include "Utils.hpp"
 
 bool ZeroMQP2PConsumer::deserialize(const void *raw_message, size_t len,
-                                    Payload &out) {
+                                    std::string &topic, Payload &out) {
 	const char *data = static_cast<const char *>(raw_message);
 	size_t offset = 0;
 
-	// Topic length & Topic and skip over it
+	// Topic length & Topic
 	uint8_t topic_len;
 	std::memcpy(&topic_len, data + offset, sizeof(uint8_t));
 	offset += sizeof(uint8_t);
+	topic.assign(data + offset, topic_len);
 	offset += topic_len;
 
 	if (Payload::deserialize(data + offset, len - offset, out) == false) {
@@ -33,14 +38,15 @@ bool ZeroMQP2PConsumer::deserialize(const void *raw_message, size_t len,
 }
 
 bool ZeroMQP2PConsumer::deserialize_id(const void *raw_message, size_t len,
-                                       Payload &out) {
+                                       std::string &topic, Payload &out) {
 	const char *data = static_cast<const char *>(raw_message);
 	size_t offset = 0;
 
-	// Topic length & Topic and skip over it
+	// Topic length & Topic
 	uint8_t topic_len;
 	std::memcpy(&topic_len, data + offset, sizeof(uint8_t));
 	offset += sizeof(uint8_t);
+	topic.assign(data + offset, topic_len);
 	offset += topic_len;
 
 	if (Payload::deserialize_id(data + offset, len - offset, out) == false) {
@@ -63,6 +69,9 @@ ZeroMQP2PConsumer::ZeroMQP2PConsumer(std::shared_ptr<Logger> logger) try
 }
 
 ZeroMQP2PConsumer::~ZeroMQP2PConsumer() {
+	stop_receiving_ = true;
+	stop_deserialize_thread_();
+
 	subscriber.close();
 	context.close();
 }
@@ -158,65 +167,40 @@ void ZeroMQP2PConsumer::subscribe(const std::string &topic) {
 }
 
 void ZeroMQP2PConsumer::start_loop() {
-	zmq::message_t zmq_message;
-	Payload payload;
+	start_deserialize_thread_();
 
-	while (true) {
+	while (!stop_receiving_) {
 		try {
-			auto result = subscriber.recv(zmq_message, zmq::recv_flags::none);
+			zmq::message_t msg;
+			auto result = subscriber.recv(msg, zmq::recv_flags::none);
 			if (!result) {
 				logger->log_info(
 				    "[ZeroMQP2P Consumer] Receive timed out, retrying...");
 				continue;
 			}
 
-			const void *data_ptr = zmq_message.data();
-			const size_t data_size = zmq_message.size();
+			const void *data_ptr = msg.data();
+			const size_t data_size = msg.size();
 
-			if ( //! deserialize(data_ptr, data_size, payload)
-			    !deserialize_id(data_ptr, data_size, payload)) {
+			Payload payload;
+			std::string topic;
+			if (!deserialize_id(data_ptr, data_size, topic, payload)) {
 				logger->log_error(
 				    "[ZeroMQP2P Consumer] Deserialization failed");
 				continue;
 			}
 
-			uint8_t topic_len;
-			std::memcpy(&topic_len, data_ptr, sizeof(uint8_t));
-			std::string topic(static_cast<const char *>(data_ptr)
-			                      + sizeof(uint8_t),
-			                  topic_len);
+			logger->log_study("Reception," + payload.message_id + "," + topic);
 
-			logger->log_study("Reception," + payload.message_id + ",-1," + topic
-			                  + "," + std::to_string(zmq_message.size()));
-
-			if (payload.message_id.find(TERMINATION_SIGNAL)
-			    != std::string::npos) {
-				std::string source =
-				    payload.message_id.substr(0, payload.message_id.find(":"));
-
-				subscribed_streams.dec();
-
-				logger->log_info(
-				    "[ZeroMQP2P Consumer] Termination signal from source: "
-				    + source + " on topic: " + topic);
-
-				if (subscribed_streams.get() == 0) {
-					logger->log_info("[ZeroMQP2P Consumer] All streams "
-					                 "terminated. Exiting.");
-					break;
-				}
-
-				logger->log_info(
-				    "[ZeroMQP2P Consumer] Remaining subscribed streams: "
-				    + std::to_string(subscribed_streams.get()));
-			}
-
+			deserialize_queue_.enqueue(std::move(msg));
 		} catch (const zmq::error_t &e) {
 			logger->log_error("[ZeroMQP2P Consumer] Receive failed: "
 			                  + std::string(e.what()));
 			continue;
 		}
 	}
+
+	stop_deserialize_thread_();
 }
 
 void ZeroMQP2PConsumer::log_configuration() {
@@ -245,4 +229,59 @@ void ZeroMQP2PConsumer::log_configuration() {
 	                   + std::to_string(minor) + "." + std::to_string(patch));
 
 	logger->log_config("[ZeroMQP2P Consumer] [CONFIG_END]");
+}
+
+void ZeroMQP2PConsumer::start_deserialize_thread_() {
+	stop_deserialization_ = false;
+	stop_receiving_ = false;
+
+	deserialize_thread_ = std::thread([this]() {
+		while (!stop_deserialization_) {
+			zmq::message_t msg;
+			if (!deserialize_queue_.try_dequeue(msg)) {
+				std::this_thread::yield();
+				continue;
+			}
+
+			const void *data_ptr = msg.data();
+			const size_t data_len = msg.size();
+
+			Payload payload;
+			std::string topic;
+			bool ok = deserialize(data_ptr, data_len, topic, payload);
+
+			if (!ok) {
+				logger->log_error(
+				    "[ZeroMQP2P Consumer] Deserialization failed.");
+				continue;
+			}
+
+			logger->log_study("Deserialized," + payload.message_id + "," + topic
+			                  + "," + std::to_string(payload.data_size) + ","
+			                  + std::to_string(data_len));
+
+			if (payload.kind == PayloadKind::TERMINATION) {
+				subscribed_streams.dec();
+				logger->log_info(
+				    "[ZeroMQP2P Consumer] Termination signal received "
+				    "for message ID: "
+				    + payload.message_id);
+				if (subscribed_streams.get() == 0) {
+					logger->log_info("[ZeroMQP2P Consumer] All streams "
+					                 "terminated. Exiting.");
+					stop_receiving_ = true;
+				}
+				logger->log_info(
+				    "[ZeroMQP2P Consumer] Remaining subscribed streams: "
+				    + std::to_string(subscribed_streams.get()));
+			}
+		}
+	});
+}
+
+void ZeroMQP2PConsumer::stop_deserialize_thread_() {
+	stop_deserialization_ = true;
+	if (deserialize_thread_.joinable()) {
+		deserialize_thread_.join();
+	}
 }
