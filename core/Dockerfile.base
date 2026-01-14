@@ -17,6 +17,7 @@ WORKDIR /app
 
 # Copy shared core files and CMakeLists.txt
 COPY ./core /app/core
+COPY ./third_party_libs /app/third_party_libs
 COPY ./CMakeLists.txt /app/CMakeLists.txt
 
 RUN mkdir /app/build 
