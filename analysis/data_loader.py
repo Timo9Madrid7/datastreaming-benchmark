@@ -19,6 +19,7 @@ SCENARIO_DURATION_RE = re.compile(r"(?P<duration>\d+)s(?:$|[^0-9A-Za-z])")
 def infer_duration_seconds_from_logs(
     scenario: str, logs_root: str | Path = "logs"
 ) -> int | None:
+    """Only for sidebar labels in plots. Not for actual calculation."""
     scenario_dir = Path(logs_root) / scenario
     if not scenario_dir.exists():
         return None

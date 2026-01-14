@@ -88,25 +88,21 @@ def main() -> None:
         value=10,
         step=1,
     )
-    throughput_event_type = st.sidebar.selectbox(
-        "Throughput event type",
-        ["Publication", "Reception"],
-        index=0,
-    )
     show_individual = st.sidebar.checkbox("Show individual runs", value=False)
 
-    st.header("Performance Summary")
-    kpi_columns = st.columns(len(selected_techs))
-    kpi_data = {}
-
-    throughput_frames: list[pl.DataFrame] = []
+    throughput_event_types = ["Publication", "Reception", "Deserialized"]
+    throughput_frames_by_event: dict[str, list[pl.DataFrame]] = {
+        event_type: [] for event_type in throughput_event_types
+    }
     latency_frames: list[pl.DataFrame] = []
     cpu_frames: list[pl.DataFrame] = []
     memory_frames: list[pl.DataFrame] = []
     disk_frames: list[pl.DataFrame] = []
 
     for tech in selected_techs:
-        run_frames = []
+        run_frames_by_event: dict[str, list[pl.DataFrame]] = {
+            event_type: [] for event_type in throughput_event_types
+        }
         latency_stats_frames = []
         cpu_runs = []
         mem_runs = []
@@ -114,15 +110,14 @@ def main() -> None:
         for run in runs_by_tech.get(tech, []):
             if run not in selected_runs:
                 continue
-            throughput = load_throughput(
-                scenario, tech, run, window_s, throughput_event_type
-            )
-            if not throughput.is_empty():
-                run_frames.append(
-                    throughput.with_columns(
-                        pl.lit(tech).alias("tech"), pl.lit(run).alias("run")
+            for event_type in throughput_event_types:
+                throughput = load_throughput(scenario, tech, run, window_s, event_type)
+                if not throughput.is_empty():
+                    run_frames_by_event[event_type].append(
+                        throughput.with_columns(
+                            pl.lit(tech).alias("tech"), pl.lit(run).alias("run")
+                        )
                     )
-                )
             latency_stats = load_latency_stats(scenario, tech, run)
             if not latency_stats.is_empty():
                 latency_stats_frames.append(latency_stats)
@@ -147,16 +142,20 @@ def main() -> None:
                     )
                 )
 
-        avg_throughput = average_curve(
-            [frame.select(["time_s", "throughput_mb_s"]) for frame in run_frames],
-            "throughput_mb_s",
-        )
-        if not avg_throughput.is_empty():
-            throughput_frames.append(
-                avg_throughput.with_columns(
-                    pl.lit(tech).alias("tech"), pl.lit("avg").alias("run")
-                )
+        for event_type in throughput_event_types:
+            avg_throughput = average_curve(
+                [
+                    frame.select(["time_s", "throughput_mb_s"])
+                    for frame in run_frames_by_event[event_type]
+                ],
+                "throughput_mb_s",
             )
+            if not avg_throughput.is_empty():
+                throughput_frames_by_event[event_type].append(
+                    avg_throughput.with_columns(
+                        pl.lit(tech).alias("tech"), pl.lit("avg").alias("run")
+                    )
+                )
         avg_latency = average_latency(latency_stats_frames)
         if not avg_latency.is_empty():
             latency_frames.append(avg_latency.with_columns(pl.lit(tech).alias("tech")))
@@ -190,65 +189,48 @@ def main() -> None:
                 )
             )
 
-        avg_throughput_value = (
-            avg_throughput.select(pl.col("throughput_mb_s").mean()).item()
-            if not avg_throughput.is_empty()
-            else 0
+    st.header("Throughput (MB/s)")
+    for event_type in throughput_event_types:
+        st.subheader(event_type)
+        throughput_display = (
+            pl.concat(throughput_frames_by_event[event_type], how="vertical")
+            if throughput_frames_by_event[event_type]
+            else pl.DataFrame()
         )
-        avg_latency_value = (
-            avg_latency.select(pl.col("p99_ms")).item()
-            if not avg_latency.is_empty()
-            else 0
-        )
-        kpi_data[tech] = (avg_throughput_value, avg_latency_value)
-
-    for column, tech in zip(kpi_columns, selected_techs):
-        throughput_value, latency_value = kpi_data.get(tech, (0, 0))
-        column.metric(
-            label=f"{tech} Avg {throughput_event_type} Throughput (MB/s)",
-            value=f"{throughput_value:,.2f}",
-        )
-        column.metric(label=f"{tech} P99 Latency (ms)", value=f"{latency_value:,.2f}")
-
-    st.header(f"{throughput_event_type} Throughput (MB/s)")
-    throughput_display = (
-        pl.concat(throughput_frames, how="vertical")
-        if throughput_frames
-        else pl.DataFrame()
-    )
-    if show_individual:
-        individual_frames = [
-            frame
-            for tech in selected_techs
-            for frame in [
-                load_throughput(
-                    scenario, tech, run, window_s, throughput_event_type
-                ).with_columns(pl.lit(tech).alias("tech"), pl.lit(run).alias("run"))
-                for run in runs_by_tech.get(tech, [])
-                if run in selected_runs
+        if show_individual:
+            individual_frames = [
+                frame
+                for tech in selected_techs
+                for frame in [
+                    load_throughput(scenario, tech, run, window_s, event_type)
+                    .with_columns(pl.lit(tech).alias("tech"), pl.lit(run).alias("run"))
+                    for run in runs_by_tech.get(tech, [])
+                    if run in selected_runs
+                ]
+                if not frame.is_empty()
             ]
-            if not frame.is_empty()
-        ]
-        if individual_frames:
-            throughput_display = pl.concat(
-                [throughput_display, *individual_frames], how="vertical"
+            if individual_frames:
+                throughput_display = pl.concat(
+                    [throughput_display, *individual_frames], how="vertical"
+                )
+        if throughput_display.is_empty():
+            st.info(
+                f"No {event_type} throughput data available for the selected filters."
             )
-    if throughput_display.is_empty():
-        st.info("No throughput data available for the selected filters.")
-    else:
-        st.altair_chart(
-            line_chart(
-                throughput_display.with_columns(
-                    (pl.col("tech") + " (" + pl.col("run") + ")").alias("series")
+        else:
+            st.altair_chart(
+                line_chart(
+                    throughput_display.with_columns(
+                        (pl.col("tech") + " (" + pl.col("run") + ")").alias("series")
+                    ),
+                    x="time_s",
+                    y="throughput_mb_s",
+                    color="series",
+                    tooltip=["time_s", "throughput_mb_s", "tech", "run"],
+                    y_title=f"{event_type} throughput (MB/s)",
                 ),
-                x="time_s",
-                y="throughput_mb_s",
-                color="series",
-                tooltip=["time_s", "throughput_mb_s", "tech", "run"],
-                y_title="Throughput (MB/s)",
-            ),
-            width="stretch",
-        )
+                width="stretch",
+            )
 
     st.header("Latency (ms)")
     latency_table_frame = (
@@ -257,13 +239,17 @@ def main() -> None:
     if latency_table_frame.is_empty():
         st.info("No latency data available for the selected filters.")
     else:
-        latency_table_frame = latency_table_frame.select(
-            pl.col("tech").alias("tech_name"),
-            pl.col("p99_ms").round(2).alias("P99_avg"),
-            pl.col("p90_ms").round(2).alias("P90_avg"),
-            pl.col("p50_ms").round(2).alias("P50_avg"),
-            pl.col("max_ms").round(2).alias("max_avg"),
-        ).sort("P99_avg", descending=True)
+        latency_table_frame = (
+            latency_table_frame.select(
+                pl.col("tech").alias("tech_name"),
+                pl.col("segment"),
+                pl.col("p50_ms").round(2).alias("P50"),
+                pl.col("p90_ms").round(2).alias("P90"),
+                pl.col("p99_ms").round(2).alias("P99"),
+                pl.col("max_ms").round(2).alias("Max"),
+            )
+            .sort(["segment", "P99"], descending=[False, True])
+        )
         st.dataframe(latency_table(latency_table_frame), width="stretch")
 
     st.header("Resource Usage")
