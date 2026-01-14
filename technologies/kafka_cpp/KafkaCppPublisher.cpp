@@ -24,6 +24,10 @@ KafkaCppPublisher::~KafkaCppPublisher() {
 	logger->log_debug("[Kafka Publisher] Cleaning up Kafka producer...");
 	if (producer_) {
 		logger->log_debug("[Kafka Publisher] Polling before flush...");
+		int served = 0;
+		do {
+			served = producer_->poll(0);
+		} while (served > 0);
 		while (producer_->outq_len() > 0) {
 			producer_->poll(100);
 		}
