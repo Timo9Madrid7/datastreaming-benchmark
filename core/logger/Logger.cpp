@@ -44,7 +44,7 @@ Logger::Logger(Logger::LogLevel log_level) : current_log_level(log_level) {
 	try {
 		// Queue size: 8192, backing threads: 1
 		if (!spdlog::thread_pool()) {
-			spdlog::init_thread_pool(8192, 1);
+			spdlog::init_thread_pool(16384, 1);
 		}
 
 		// Create a color sink for stdout
