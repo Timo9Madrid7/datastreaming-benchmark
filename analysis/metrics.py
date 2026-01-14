@@ -16,16 +16,6 @@ def _load_event_log(run_dir: Path) -> pl.DataFrame:
         return pl.DataFrame()
     lf = pl.scan_parquet(str(run_dir / "*.parquet"))
     schema = lf.collect_schema()
-    select_cols = [
-        "timestamp",
-        "event_type",
-        "message_id",
-        "topic",
-        "container_name",
-        "logical_size",
-        "serialized_size"
-    ]
-
     topic_expr = (
         pl.col("topic").cast(pl.Utf8, strict=False)
         if "topic" in schema
@@ -46,8 +36,16 @@ def _load_event_log(run_dir: Path) -> pl.DataFrame:
         if "serialized_size" in schema
         else pl.lit(None).cast(pl.Int64).alias("serialized_size")
     )
-    return (
-        lf.select(select_cols)
+    df = (
+        lf.select(
+            pl.col("timestamp"),
+            pl.col("event_type"),
+            pl.col("message_id"),
+            topic_expr,
+            container_expr,
+            logical_size_expr,
+            serialized_size_expr,
+        )
         .with_columns(
             pl.coalesce(
                 [
@@ -59,11 +57,8 @@ def _load_event_log(run_dir: Path) -> pl.DataFrame:
                     ),
                 ]
             ).alias("timestamp"),
+            pl.col("event_type").cast(pl.Utf8, strict=False).alias("event_type"),
             pl.col("message_id").cast(pl.Utf8, strict=False).alias("message_id"),
-            topic_expr,
-            container_expr,
-            logical_size_expr,
-            serialized_size_expr,
         )
         .filter(
             pl.col("event_type").is_in(
@@ -73,6 +68,16 @@ def _load_event_log(run_dir: Path) -> pl.DataFrame:
         .filter(pl.col("message_id").is_not_null())
         .collect()
     )
+
+    # If a technology does not produce Deserialized events, treat Reception as Deserialized
+    # so downstream throughput/latency computations can still run.
+    if df.filter(pl.col("event_type") == "Deserialized").is_empty():
+        reception_as_deserialized = df.filter(pl.col("event_type") == "Reception").with_columns(
+            pl.lit("Deserialized").alias("event_type")
+        )
+        df = pl.concat([df, reception_as_deserialized], how="vertical")
+
+    return df
 
 
 def _load_resource_metrics(run_dir: Path) -> pl.DataFrame:
