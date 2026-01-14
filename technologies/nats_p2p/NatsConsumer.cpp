@@ -1,6 +1,6 @@
 #include "NatsConsumer.hpp"
 
-#include <chrono>        // for milliseconds, nanoseconds
+#include <chrono>        // for milliseconds
 #include <climits>       // for INT_MAX
 #include <cstddef>       // for size_t
 #include <nats/nats.h>   // for natsStatus_GetText, natsMsg_Destroy, natsMs...
@@ -190,7 +190,7 @@ void NatsConsumer::start_deserialize_thread_() {
 		while (!stop_deserialization_) {
 			natsMsg *msg;
 			if (!deserialize_queue_.try_dequeue(msg)) {
-				std::this_thread::sleep_for(std::chrono::nanoseconds(100));
+				std::this_thread::yield();
 				continue;
 			}
 
