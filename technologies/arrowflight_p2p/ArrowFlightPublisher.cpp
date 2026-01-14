@@ -195,6 +195,8 @@ bool ArrowFlightPublisher::serialize(const Payload &message, void *out) {
 
 void ArrowFlightPublisher::send_message(const Payload &message,
                                         std::string &ticket) {
+	logger->log_study("Serializing," + message.message_id + "," + ticket);
+
 	BatchBuilder &bb = ticket_batch_builders_[ticket];
 
 	if (!serialize(message, &bb)) {
@@ -205,8 +207,8 @@ void ArrowFlightPublisher::send_message(const Payload &message,
 	}
 
 	bb.publication_logs.push_back(
-	    "Publication," + message.message_id + ","
-	    + std::to_string(message.data_size) + "," + ticket + ","
+	    "Publication," + message.message_id + "," + ticket + ","
+	    + std::to_string(message.data_size) + ","
 	    + std::to_string(message.message_id.size() + sizeof(uint8_t)
 	                     + message.data_size));
 
@@ -228,7 +230,7 @@ void ArrowFlightPublisher::send_message(const Payload &message,
 	for (const auto &log_entry : bb.publication_logs) {
 		logger->log_study(log_entry);
 	}
-	
+
 	bb.reset();
 }
 

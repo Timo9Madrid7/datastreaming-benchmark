@@ -30,6 +30,4 @@ class ArrowFlightConsumer : public IConsumer {
 
 	void consume_from_publisher_(const std::string &endpoint,
 	                             const std::string &ticket);
-	void consume_id_from_publisher_(const std::string &endpoint,
-	                                const std::string &ticket);
 };
