@@ -200,7 +200,7 @@ void ArrowFlightConsumer::consume_from_publisher_(const std::string &endpoint,
 			size_t row_size = message_id_column->value_length(i)
 			    + sizeof(uint8_t) + data_column->value_length(i);
 
-			logger->log_study("Reception," + message_id + "," + ticket + ","
+			logger->log_study("Deserialized," + message_id + "," + ticket + ","
 			                  + std::to_string(data_size) + ","
 			                  + std::to_string(row_size));
 
