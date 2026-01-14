@@ -271,9 +271,9 @@ class ContainerEventsLogger:
                 rest = rest.lstrip()
 
             # Expected formats:
-            #   [STUDY] <ts>,<event_type>,<message_id>,<logical_size>,<topic>,<serialized_size>
+            #   [STUDY] <ts>,<event_type>,<message_id>,<topic>,<logical_size>,<serialized_size>
             # or (no topic):
-            #   [STUDY] <ts>,<event_type>,<message_id>,<logical_size>,<serialized_size>
+            #   [STUDY] <ts>,<event_type>,<message_id>,<topic>
             # Split at most 5 times to limit allocations.
             parts = rest.split(",", 5)
             if len(parts) < 4:
@@ -282,14 +282,9 @@ class ContainerEventsLogger:
             timestamp_part = parts[0].strip() if len(parts) > 0 else None
             event_type_part = parts[1].strip() if len(parts) > 1 else None
             message_id_part = parts[2].strip() if len(parts) > 2 else None
-            logical_size_part = parts[3].strip() if len(parts) > 3 else None
-            topic_part: Optional[str] = None
-            serialized_size_part: Optional[str] = None
-            if len(parts) >= 6:
-                topic_part = parts[4].strip() if parts[4] else None
-                serialized_size_part = parts[5].strip() if parts[5] else None
-            elif len(parts) == 5:
-                serialized_size_part = parts[4].strip() if parts[4] else None
+            topic_part = parts[3].strip() if len(parts) > 3 else None
+            logical_size_part = parts[4].strip() if len(parts) > 4 else None
+            serialized_size_part = parts[5].strip() if len(parts) > 5 else None
 
             if not timestamp_part:
                 return None
@@ -307,7 +302,6 @@ class ContainerEventsLogger:
             if not serialized_size_part:
                 serialized_size = None
             else:
-                # Fast path: most sizes are integers. Some logs may emit decimals.
                 if "." in serialized_size_part:
                     serialized_size = int(float(serialized_size_part))
                 else:
