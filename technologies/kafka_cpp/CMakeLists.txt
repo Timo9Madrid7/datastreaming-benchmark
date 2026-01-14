@@ -18,6 +18,7 @@ target_include_directories(kafka_cpp_technology PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${RDKAFKA_INCLUDE_DIR}
     ${LZ4_INCLUDE_DIR}
+    ${CMAKE_SOURCE_DIR}/third_party_libs/spsc_queue/
 )
 
 target_link_libraries(kafka_cpp_technology PRIVATE
