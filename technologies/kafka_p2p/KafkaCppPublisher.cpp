@@ -88,6 +88,8 @@ void KafkaCppPublisher::initialize() {
 
 void KafkaCppPublisher::send_message(const Payload &message,
                                      std::string &topic) {
+	logger->log_study("Serializing," + message.message_id + "," + topic);
+
 	size_t serialized_size = sizeof(uint16_t) // Message ID Length
 	    + message.message_id.size()           // Message ID
 	    + sizeof(uint8_t)                     // Kind
@@ -110,9 +112,6 @@ void KafkaCppPublisher::send_message(const Payload &message,
 		logger->log_error("[Kafka Publisher] Produce failed: "
 		                  + RdKafka::err2str(err));
 	} else {
-		logger->log_study("Publication," + message.message_id + ","
-		                  + std::to_string(message.data_size) + "," + topic
-		                  + "," + std::to_string(serialized_size));
 		logger->log_debug("[Kafka Publisher] Message queued for topic: "
 		                  + topic);
 	}

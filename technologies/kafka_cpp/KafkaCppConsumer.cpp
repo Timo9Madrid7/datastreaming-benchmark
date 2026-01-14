@@ -23,6 +23,10 @@ KafkaCppConsumer::~KafkaCppConsumer() {
 			logger->log_error("[Kafka Consumer] Failed to unsubscribe: "
 			                  + RdKafka::err2str(err));
 		}
+
+		stop_receiving_ = true;
+		stop_deserialize_thread_();
+
 		consumer_->close();
 		consumer_.reset();
 		logger->log_debug("[Kafka Consumer] Kafka consumer closed.");
@@ -146,7 +150,9 @@ void KafkaCppConsumer::subscribe(const std::string &topic) {
 }
 
 void KafkaCppConsumer::start_loop() {
-	while (true) {
+	start_deserialize_thread_();
+
+	while (!stop_receiving_) {
 		logger->log_debug("[Kafka Consumer] Polling for messages...");
 		std::unique_ptr<RdKafka::Message> msg(consumer_->consume(2000));
 
@@ -183,37 +189,23 @@ void KafkaCppConsumer::start_loop() {
 			continue;
 		}
 
-		Payload payload = {};
+		Payload payload;
 		logger->log_info("[Kafka Consumer] Received message on topic '" + topic
 		                 + "' with " + std::to_string(msg->len()) + " bytes");
 
-		if ( // !Payload::deserialize(msg->payload, msg->len, payload)
-		    !Payload::deserialize_id(msg->payload(), msg->len(), payload)) {
+		if (!Payload::deserialize_id(msg->payload(), msg->len(), payload)) {
 			logger->log_error("[Kafka Consumer] Deserialization failed for "
 			                  "message on topic: "
 			                  + topic);
 			continue;
 		}
 
-		logger->log_study("Reception," + payload.message_id + ",-1," + topic
-		                  + "," + std::to_string(msg->len()));
+		logger->log_study("Reception," + payload.message_id + "," + topic);
 
-		if (payload.message_id.find(TERMINATION_SIGNAL) != std::string::npos) {
-			subscribed_streams.dec();
-
-			logger->log_info(
-			    "[Kafka Consumer] Received termination signal for topic: "
-			    + topic);
-
-			if (subscribed_streams.get() == 0) {
-				logger->log_info("[Kafka Consumer] All streams "
-				                 "terminated. Exiting.");
-				break;
-			}
-			logger->log_info("[Kafka Consumer] Remaining subscribed streams: "
-			                 + std::to_string(subscribed_streams.get()));
-		}
+		deserialize_queue_.enqueue(std::move(msg));
 	}
+
+	stop_deserialize_thread_();
 }
 
 void KafkaCppConsumer::log_configuration() {
@@ -224,4 +216,58 @@ void KafkaCppConsumer::log_configuration() {
 		logger->log_config("[CONFIG] " + *it++ + "=" + *it++);
 	}
 	logger->log_config("[Kafka Consumer] [CONFIG_END]");
+}
+
+void KafkaCppConsumer::start_deserialize_thread_() {
+	stop_deserialization_ = false;
+	stop_receiving_ = false;
+
+	deserialize_thread_ = std::thread([this]() {
+		while (!stop_deserialization_ || deserialize_queue_.size_approx() > 0) {
+			std::unique_ptr<RdKafka::Message> msg;
+			if (!deserialize_queue_.try_dequeue(msg)) {
+				std::this_thread::yield();
+				continue;
+			}
+
+			const std::string topic =
+			    !msg->topic_name().empty() ? msg->topic_name() : "unknown";
+			const void *data_ptr = msg->payload();
+			const size_t data_len = static_cast<size_t>(msg->len());
+
+			Payload payload;
+			bool ok = Payload::deserialize(data_ptr, data_len, payload);
+
+			if (!ok) {
+				logger->log_error("[Kafka Consumer] Deserialization failed.");
+				continue;
+			}
+
+			logger->log_study("Deserialized," + payload.message_id + "," + topic
+			                  + "," + std::to_string(payload.data_size) + ","
+			                  + std::to_string(data_len));
+
+			if (payload.kind == PayloadKind::TERMINATION) {
+				subscribed_streams.dec();
+				logger->log_info("[Kafka Consumer] Termination signal received "
+				                 "for message ID: "
+				                 + payload.message_id);
+				if (subscribed_streams.get() == 0) {
+					logger->log_info(
+					    "[Kafka Consumer] All streams terminated. Exiting.");
+					stop_receiving_ = true;
+				}
+				logger->log_info(
+				    "[Kafka Consumer] Remaining subscribed streams: "
+				    + std::to_string(subscribed_streams.get()));
+			}
+		}
+	});
+}
+
+void KafkaCppConsumer::stop_deserialize_thread_() {
+	stop_deserialization_ = true;
+	if (deserialize_thread_.joinable()) {
+		deserialize_thread_.join();
+	}
 }
