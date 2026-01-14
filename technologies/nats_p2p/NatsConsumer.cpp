@@ -210,8 +210,9 @@ void NatsConsumer::start_deserialize_thread_() {
 			}
 
 			logger->log_study("Deserialized," + payload.message_id + ","
+			                  + subject_str + ","
 			                  + std::to_string(payload.data_size) + ","
-			                  + subject_str + "," + std::to_string(data_len));
+			                  + std::to_string(data_len));
 
 			if (payload.kind == PayloadKind::TERMINATION) {
 				subscribed_streams.dec();
