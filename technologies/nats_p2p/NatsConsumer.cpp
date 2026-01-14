@@ -1,21 +1,22 @@
 #include "NatsConsumer.hpp"
 
-#include <chrono>
-#include <climits>
-#include <cstring>
-#include <nats/nats.h>
-#include <nats/status.h>
-#include <optional>
-#include <sstream>
-#include <stdexcept>
-#include <string>
-#include <thread>
-#include <unordered_set>
-#include <utility>
+#include <chrono>        // for milliseconds, nanoseconds
+#include <climits>       // for INT_MAX
+#include <cstddef>       // for size_t
+#include <nats/nats.h>   // for natsStatus_GetText, natsMsg_Destroy, natsMs...
+#include <nats/status.h> // for NATS_OK, natsStatus, NATS_TIMEOUT
+#include <optional>      // for optional
+#include <sstream>       // for istringstream, basic_istream
+#include <stdexcept>     // for runtime_error
+#include <string>        // for operator+, string, char_traits, to_string
+#include <thread>        // for sleep_for, thread
+#include <unordered_set> // for unordered_set
+#include <utility>       // for pair
 
-#include "Logger.hpp"
-#include "Payload.hpp"
-#include "Utils.hpp"
+#include "Logger.hpp"  // for Logger
+#include "Payload.hpp" // for Payload, PayloadKind, PayloadKind::TERMINATION
+#include "Utils.hpp"   // for get_env_var_or_default, get_env_var
+
 
 namespace {
 std::string build_nats_url(const std::string &endpoint,
@@ -35,6 +36,10 @@ NatsConsumer::NatsConsumer(std::shared_ptr<Logger> logger)
 
 NatsConsumer::~NatsConsumer() {
 	logger->log_debug("[NATS Consumer] Cleaning up NATS consumer...");
+
+	stop_receiving_ = true;
+	stop_deserialize_thread_();
+
 	subscription_.reset();
 	connection_.reset();
 	logger->log_debug("[NATS Consumer] Destructor finished.");
@@ -131,7 +136,9 @@ void NatsConsumer::subscribe(const std::string &subject) {
 }
 
 void NatsConsumer::start_loop() {
-	while (true) {
+	start_deserialize_thread_();
+
+	while (!stop_receiving_) {
 		natsMsg *msg = nullptr;
 		natsStatus status =
 		    natsSubscription_NextMsg(&msg, subscription_.get(), 1000);
@@ -147,40 +154,25 @@ void NatsConsumer::start_loop() {
 			continue;
 		}
 
+		Payload payload;
 		const char *subject = natsMsg_GetSubject(msg);
 		const std::string subject_str = subject ? subject : "";
-
-		Payload payload;
 		const void *data_ptr = natsMsg_GetData(msg);
 		const size_t data_len = static_cast<size_t>(natsMsg_GetDataLength(msg));
 
-		if ( //! Payload::deserialize(data_ptr, data_len, payload)
-		    !Payload::deserialize_id(data_ptr, data_len, payload)) {
+		if (!Payload::deserialize_id(data_ptr, data_len, payload)) {
 			logger->log_error("[NATS Consumer] Deserialization failed.");
 			natsMsg_Destroy(msg);
 			continue;
 		}
 
-		logger->log_study("Reception," + payload.message_id + ",-1,"
-		                  + subject_str + "," + std::to_string(data_len));
+		logger->log_study("Reception," + payload.message_id + ","
+		                  + subject_str);
 
-		if (payload.message_id.find(TERMINATION_SIGNAL) != std::string::npos) {
-			subscribed_streams.dec();
-			logger->log_info(
-			    "[NATS Consumer] Termination signal received for topic: "
-			    + subject_str);
-			if (subscribed_streams.get() == 0) {
-				logger->log_info(
-				    "[NATS Consumer] All streams terminated. Exiting.");
-				natsMsg_Destroy(msg);
-				break;
-			}
-			logger->log_info("[NATS Consumer] Remaining subscribed streams: "
-			                 + std::to_string(subscribed_streams.get()));
-		}
-
-		natsMsg_Destroy(msg);
+		deserialize_queue_.enqueue(msg);
 	}
+
+	stop_deserialize_thread_();
 }
 
 void NatsConsumer::log_configuration() {
@@ -189,4 +181,67 @@ void NatsConsumer::log_configuration() {
 	logger->log_config("[CONFIG] TOPICS="
 	                   + utils::get_env_var_or_default("TOPICS", ""));
 	logger->log_config("[NATS Consumer] [CONFIG_END]");
+}
+
+void NatsConsumer::start_deserialize_thread_() {
+	stop_deserialization_ = false;
+	stop_receiving_ = false;
+
+	deserialize_thread_ = std::thread([this]() {
+		while (!stop_deserialization_) {
+			natsMsg *msg;
+			if (!deserialize_queue_.try_dequeue(msg)) {
+				std::this_thread::sleep_for(std::chrono::nanoseconds(100));
+				continue;
+			}
+
+			const char *subject = natsMsg_GetSubject(msg);
+			const std::string subject_str = subject ? subject : "";
+			const void *data_ptr = natsMsg_GetData(msg);
+			const size_t data_len =
+			    static_cast<size_t>(natsMsg_GetDataLength(msg));
+
+			Payload payload;
+			bool ok = Payload::deserialize(data_ptr, data_len, payload);
+			natsMsg_Destroy(msg);
+
+			if (!ok) {
+				logger->log_error("[NATS Consumer] Deserialization failed.");
+				continue;
+			}
+
+			logger->log_study("Deserialized," + payload.message_id + ","
+			                  + std::to_string(payload.data_size) + ","
+			                  + subject_str + "," + std::to_string(data_len));
+
+			if (payload.kind == PayloadKind::TERMINATION) {
+				subscribed_streams.dec();
+				logger->log_info("[NATS Consumer] Termination signal received "
+				                 "for message ID: "
+				                 + payload.message_id);
+				if (subscribed_streams.get() == 0) {
+					logger->log_info(
+					    "[NATS Consumer] All streams terminated. Exiting.");
+					stop_receiving_ = true;
+				}
+				logger->log_info(
+				    "[NATS Consumer] Remaining subscribed streams: "
+				    + std::to_string(subscribed_streams.get()));
+			}
+		}
+	});
+}
+
+void NatsConsumer::stop_deserialize_thread_() {
+	stop_deserialization_ = true;
+	if (deserialize_thread_.joinable()) {
+		deserialize_thread_.join();
+	}
+
+	natsMsg *msg;
+	while (deserialize_queue_.try_dequeue(msg)) {
+		if (msg) {
+			natsMsg_Destroy(msg);
+		}
+	}
 }

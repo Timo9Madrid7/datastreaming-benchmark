@@ -54,6 +54,8 @@ void NatsPublisher::initialize() {
 }
 
 void NatsPublisher::send_message(const Payload &message, std::string &subject) {
+	logger->log_study("Serializing," + message.message_id + "," + subject);
+	
 	const size_t serialized_size = sizeof(uint16_t) + message.message_id.size()
 	    + sizeof(uint8_t) + sizeof(size_t) + message.data_size;
 	std::string serialized(serialized_size, '\0');
