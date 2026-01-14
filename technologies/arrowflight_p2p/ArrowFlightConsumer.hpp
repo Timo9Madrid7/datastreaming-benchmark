@@ -19,8 +19,6 @@ class ArrowFlightConsumer : public IConsumer {
 	void initialize() override;
 	void subscribe(const std::string &ticket) override;
 	void start_loop() override;
-	bool deserialize(const void *raw_message, size_t len,
-	                 Payload &out) override;
 	void log_configuration() override;
 
   private:
@@ -33,5 +31,5 @@ class ArrowFlightConsumer : public IConsumer {
 	void consume_from_publisher_(const std::string &endpoint,
 	                             const std::string &ticket);
 	void consume_id_from_publisher_(const std::string &endpoint,
-	                             const std::string &ticket);
+	                                const std::string &ticket);
 };

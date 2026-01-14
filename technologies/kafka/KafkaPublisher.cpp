@@ -114,36 +114,6 @@ void KafkaPublisher::initialize() {
 	log_configuration();
 }
 
-bool KafkaPublisher::serialize(const Payload &message, void *out) {
-	char *ptr = static_cast<char *>(out);
-
-	// Message ID Length
-	const uint16_t id_len = static_cast<uint16_t>(message.message_id.size());
-	memcpy(ptr, &id_len, sizeof(id_len));
-	ptr += sizeof(id_len);
-
-	// Message ID
-	memcpy(ptr, message.message_id.data(), id_len);
-	ptr += id_len;
-
-	// Kind
-	const uint8_t kind = static_cast<uint8_t>(message.kind);
-	memcpy(ptr, &kind, sizeof(kind));
-	ptr += sizeof(kind);
-
-	// Data size
-	const size_t data_size = static_cast<size_t>(message.data_size);
-	memcpy(ptr, &data_size, sizeof(data_size));
-	ptr += sizeof(data_size);
-
-	// Data
-	if (data_size > 0) {
-		memcpy(ptr, message.data.data(), data_size);
-	}
-
-	return true;
-}
-
 void KafkaPublisher::send_message(const Payload &message, std::string &topic) {
 	const size_t serialized_size = sizeof(uint16_t) // Message ID Length
 	    + message.message_id.size()                 // Message ID
@@ -151,7 +121,7 @@ void KafkaPublisher::send_message(const Payload &message, std::string &topic) {
 	    + sizeof(size_t)                            // Data size
 	    + message.data_size;                        // Data
 	std::string serialized(serialized_size, '\0');
-	if (!serialize(message, serialized.data())) {
+	if (!Payload::serialize(message, serialized.data())) {
 		logger->log_error(
 		    "[Kafka Publisher] Serialization failed for message ID: "
 		    + message.message_id);

@@ -8,7 +8,6 @@
 #include <sys/types.h>
 #include <unordered_set>
 #include <utility>
-#include <vector>
 #include <zmq.hpp>
 
 #include "Payload.hpp"
@@ -25,39 +24,10 @@ bool ZeroMQP2PConsumer::deserialize(const void *raw_message, size_t len,
 	offset += sizeof(uint8_t);
 	offset += topic_len;
 
-	// Message ID length
-	uint16_t id_len;
-	std::memcpy(&id_len, data + offset, sizeof(uint16_t));
-	offset += sizeof(uint16_t);
-
-	// Message ID
-	std::string message_id(data + offset, id_len);
-	offset += id_len;
-
-	// Kind
-	uint8_t kind_byte;
-	std::memcpy(&kind_byte, data + offset, sizeof(uint8_t));
-	offset += sizeof(uint8_t);
-	PayloadKind kind_payload = static_cast<PayloadKind>(kind_byte);
-
-	// Data size
-	size_t data_size;
-	std::memcpy(&data_size, data + offset, sizeof(size_t));
-	offset += sizeof(size_t);
-
-	if (len != offset + data_size) {
-		logger->log_error(
-		    "[ZeroMQP2P Consumer] Invalid message: size mismatch");
+	if (Payload::deserialize(data + offset, len - offset, out) == false) {
+		logger->log_error("[ZeroMQP2P Consumer] Deserialization failed.");
 		return false;
 	}
-
-	// Data
-	std::vector<uint8_t> payload_data(data + offset, data + offset + data_size);
-
-	out.message_id = message_id;
-	out.kind = kind_payload;
-	out.data_size = data_size;
-	out.data = std::move(payload_data);
 
 	return true;
 }
@@ -73,16 +43,10 @@ bool ZeroMQP2PConsumer::deserialize_id(const void *raw_message, size_t len,
 	offset += sizeof(uint8_t);
 	offset += topic_len;
 
-	// Message ID length
-	uint16_t id_len;
-	std::memcpy(&id_len, data + offset, sizeof(uint16_t));
-	offset += sizeof(uint16_t);
-
-	// Message ID
-	std::string message_id(data + offset, id_len);
-	offset += id_len;
-
-	out.message_id = message_id;
+	if (Payload::deserialize_id(data + offset, len - offset, out) == false) {
+		logger->log_error("[ZeroMQP2P Consumer] Deserialization failed.");
+		return false;
+	}
 
 	return true;
 }

@@ -15,7 +15,6 @@ class NatsPublisher : public IPublisher {
 	~NatsPublisher() override;
 
 	void initialize() override;
-	bool serialize(const Payload &message, void *out) override;
 	void send_message(const Payload &message, std::string &subject) override;
 	void log_configuration() override;
 

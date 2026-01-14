@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstddef>
 #include <librdkafka/rdkafka.h>
 #include <string>
 #include <unordered_set>
@@ -15,9 +14,6 @@ class KafkaConsumer : public IConsumer {
 	void initialize() override;
 	void subscribe(const std::string &topic) override;
 	void start_loop() override;
-	bool deserialize(const void *raw_message, size_t len,
-	                 Payload &out) override;
-	bool deserialize_id(const void *raw_message, size_t len, Payload &out);
 	void log_configuration() override;
 
   private:

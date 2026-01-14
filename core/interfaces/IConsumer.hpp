@@ -7,7 +7,6 @@
 #include <sys/types.h>
 
 #include "Logger.hpp"
-#include "Payload.hpp"
 
 class IConsumer {
   private:
@@ -15,16 +14,6 @@ class IConsumer {
 	@brief Logs the configuration of the consumer.
 	*/
 	virtual void log_configuration() = 0;
-
-	/**
-	@brief Deserializes a raw message into a vector of Payload objects.
-	@param raw_message The raw message to deserialize.
-	@param len The length of the raw message.
-	@param out The Payload object to store the deserialized message.
-	@return True if deserialization was successful, false otherwise.
-	*/
-	virtual bool deserialize(const void *raw_message, size_t len,
-	                         Payload &out) = 0;
 
 	/**
 	@brief A thread-safe counter for tracking the number of subscribed streams.

@@ -48,4 +48,33 @@ struct Payload {
 	@return PayloadKind enum value
 	*/
 	static std::string payloadkind_to_string(PayloadKind kind);
+
+	/**
+	@brief Serialize a Payload object into a raw byte buffer
+	@param message Payload object to serialize
+	@param out Pointer to the output buffer
+	@return True if serialization is successful, false otherwise
+	*/
+	static bool serialize(const Payload &message, void *out) noexcept;
+
+	/**
+	@brief Deserialize a raw byte buffer into a Payload object
+	@param raw_message Pointer to the raw byte buffer
+	@param len Length of the raw byte buffer
+	@param out Reference to the output Payload object
+	@return True if deserialization is successful, false otherwise
+	*/
+	static bool deserialize(const void *raw_message, size_t len,
+	                        Payload &out) noexcept;
+
+	/**
+	@brief Deserialize only the message ID from a raw byte buffer into a Payload
+	object
+	@param raw_message Pointer to the raw byte buffer
+	@param len Length of the raw byte buffer
+	@param out Reference to the output Payload object
+	@return True if deserialization is successful, false otherwise
+	*/
+	static bool deserialize_id(const void *raw_message, size_t len,
+	                           Payload &out) noexcept;
 };

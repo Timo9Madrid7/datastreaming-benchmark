@@ -337,13 +337,6 @@ void ArrowFlightConsumer::start_loop() {
 	logger->log_info("[Flight Consumer] All streams ended.");
 }
 
-bool ArrowFlightConsumer::deserialize(const void *raw_message, size_t len,
-                                      Payload &out) {
-	logger->log_error(
-	    "[Flight Consumer] Flight does not need deserialization!");
-	return false;
-}
-
 void ArrowFlightConsumer::log_configuration() {
 	logger->log_config("[Flight Consumer] [CONFIG_BEGIN]");
 

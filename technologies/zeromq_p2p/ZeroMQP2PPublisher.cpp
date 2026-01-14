@@ -6,12 +6,6 @@
 
 #include "Payload.hpp"
 
-bool ZeroMQP2PPublisher::serialize(const Payload &messages, void *out) {
-	logger->log_error("[ZeroMQP2P Publisher] serialize called without topic. "
-	                  "This should not happen.");
-	return false;
-}
-
 bool ZeroMQP2PPublisher::serialize(const Payload &message, std::string topic,
                                    void *out) {
 	char *ptr = static_cast<char *>(out);
@@ -24,28 +18,14 @@ bool ZeroMQP2PPublisher::serialize(const Payload &message, std::string topic,
 	// Topic
 	std::memcpy(ptr, topic.data(), topic_len);
 	ptr += topic_len;
-
-	// Message ID length
-	const uint16_t id_len = static_cast<uint16_t>(message.message_id.size());
-	std::memcpy(ptr, &id_len, sizeof(id_len));
-	ptr += sizeof(id_len);
-
-	// Message ID
-	std::memcpy(ptr, message.message_id.data(), id_len);
-	ptr += id_len;
-
-	// Kind
-	const uint8_t kind = static_cast<uint8_t>(message.kind);
-	std::memcpy(ptr, &kind, sizeof(kind));
-	ptr += sizeof(kind);
-
-	// Data size
-	const size_t data_size = static_cast<size_t>(message.data_size);
-	std::memcpy(ptr, &data_size, sizeof(data_size));
-	ptr += sizeof(data_size);
-
-	// Data
-	std::memcpy(ptr, message.data.data(), data_size);
+	
+	// Payload serialization
+	if (!Payload::serialize(message, ptr)) {
+		logger->log_error(
+		    "[ZeroMQP2P Publisher] Serialization failed for message ID: "
+		    + message.message_id);
+		return false;
+	}
 
 	return true;
 }
