@@ -236,7 +236,7 @@ void ZeroMQP2PConsumer::start_deserialize_thread_() {
 	stop_receiving_ = false;
 
 	deserialize_thread_ = std::thread([this]() {
-		while (!stop_deserialization_) {
+		while (!stop_deserialization_ || deserialize_queue_.size_approx() > 0) {
 			zmq::message_t msg;
 			if (!deserialize_queue_.try_dequeue(msg)) {
 				std::this_thread::yield();
