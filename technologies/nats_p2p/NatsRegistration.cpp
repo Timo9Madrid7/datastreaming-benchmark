@@ -1,4 +1,4 @@
-#include <memory>        // for shared_ptr, unique_ptr, make_unique
+#include <memory> // for shared_ptr, unique_ptr, make_unique
 
 #include "./NatsConsumer.hpp"  // for NatsConsumer
 #include "./NatsPublisher.hpp" // for NatsPublisher

@@ -17,7 +17,6 @@
 #include "Payload.hpp" // for Payload, PayloadKind, PayloadKind::TERMINATION
 #include "Utils.hpp"   // for get_env_var_or_default, get_env_var
 
-
 namespace {
 std::string build_nats_url(const std::string &endpoint,
                            const std::string &port) {
