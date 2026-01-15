@@ -73,12 +73,13 @@ void KafkaCppPublisher::initialize() {
 	}
 
 	// Producer performance configuration (latency/throughput trade-offs)
-	conf_->set("acks", "1", errstr);
+	conf_->set("acks", "0", errstr);
 	conf_->set("linger.ms", "1", errstr);
 	conf_->set("batch.size", "262144", errstr);
 	conf_->set("batch.num.messages", "10000", errstr);
 	conf_->set("compression.type", "none", errstr);
-	conf_->set("queue.buffering.max.kbytes", "65536", errstr);
+	conf_->set("queue.buffering.max.kbytes", "4194304", errstr);
+	conf_->set("queue.buffering.max.messages", "1000000", errstr);
 
 	producer_.reset(RdKafka::Producer::create(conf_.get(), errstr));
 
@@ -120,12 +121,7 @@ void KafkaCppPublisher::send_message(const Payload &message,
 		                  + topic);
 	}
 
-	// Poll less often to reduce per-message overhead (still drives delivery
-	// reports)
-	static thread_local uint32_t poll_every = 0;
-	if ((++poll_every % 1000u) == 0u) {
-		producer_->poll(0);
-	}
+	producer_->poll(0);
 }
 
 void KafkaCppPublisher::log_configuration() {

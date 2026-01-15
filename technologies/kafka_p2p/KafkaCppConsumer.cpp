@@ -97,11 +97,11 @@ void KafkaCppConsumer::initialize() {
 	}
 
 	// Low Latency Configuration
-	conf_->set("fetch.min.bytes", "16384", err_msg);
-	conf_->set("fetch.wait.max.ms", "5", err_msg);
-	conf_->set("max.partition.fetch.bytes", "1048576", err_msg);
-	conf_->set("fetch.message.max.bytes", "1048576", err_msg);
-	conf_->set("queued.min.messages.kbytes", "16384", err_msg);
+	conf_->set("fetch.min.bytes", "1048576", err_msg);
+	conf_->set("fetch.wait.max.ms", "20", err_msg);
+	conf_->set("max.partition.fetch.bytes", "8388608", err_msg);
+	conf_->set("fetch.message.max.bytes", "8388608", err_msg);
+	conf_->set("queued.max.messages.kbytes", "4194304", err_msg);
 
 	consumer_.reset(RdKafka::KafkaConsumer::create(conf_.get(), err_msg));
 
@@ -175,13 +175,6 @@ void KafkaCppConsumer::start_loop() {
 
 		std::string topic =
 		    !msg->topic_name().empty() ? msg->topic_name() : "unknown";
-
-		if (msg->err() == RdKafka::ERR__PARTITION_EOF) {
-			logger->log_debug("[Kafka Consumer] Reached end of partition for "
-			                  "topic: "
-			                  + topic);
-			continue;
-		}
 
 		if (msg->len() == 0) {
 			logger->log_debug(
