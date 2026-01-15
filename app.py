@@ -63,18 +63,22 @@ def main() -> None:
 
     duration_s = infer_duration_seconds_from_logs(scenario)
     if duration_s is None:
-        st.error("Could not infer scenario duration from logs.")
-        return
-    st.sidebar.caption(f"Duration inferred from logs: {duration_s}s")
+        st.sidebar.caption("Duration inferred from logs: unknown")
+    else:
+        st.sidebar.caption(
+            f"Duration inferred from logs (nominal): {duration_s}s"
+        )
 
     st.sidebar.subheader("Trim unstable edges")
-    max_offset = max(0, int(duration_s))
+    # IMPORTANT: do not treat inferred duration as real runtime.
+    # Consumers can lag behind, making actual event timelines longer.
+    max_offset = 3600
     start_offset_s = int(
         st.sidebar.number_input(
             "Start offset (s)",
             min_value=0,
             max_value=max_offset,
-            value=min(5, max_offset),
+            value=5,
             step=1,
             help="Ignore the first N seconds for throughput and latency.",
         )
@@ -84,24 +88,25 @@ def main() -> None:
             "End offset (s)",
             min_value=0,
             max_value=max_offset,
-            value=min(5, max_offset),
+            value=5,
             step=1,
             help="Ignore the last N seconds for throughput and latency.",
         )
     )
-    if start_offset_s + end_offset_s >= duration_s:
-        st.sidebar.error(
-            "Start offset + end offset must be smaller than duration."
-        )
-        return
     st.sidebar.caption(
-        f"Effective window: {start_offset_s}s .. {duration_s - end_offset_s}s"
+        "Effective window (per run): "
+        f"{start_offset_s}s .. (max time - {end_offset_s}s)"
     )
 
     def _trim_throughput_window(frame: pl.DataFrame) -> pl.DataFrame:
         if frame.is_empty():
             return frame
-        end_s = duration_s - end_offset_s
+        max_time_s = frame.select(pl.col("time_s").max()).item()
+        if max_time_s is None:
+            return frame.head(0)
+        end_s = int(max_time_s) - end_offset_s
+        if end_s < start_offset_s:
+            return frame.head(0)
         return frame.filter(
             (pl.col("time_s") >= start_offset_s) & (pl.col("time_s") <= end_s)
         )
@@ -114,7 +119,12 @@ def main() -> None:
         if samples.is_empty():
             return pl.DataFrame()
 
-        end_s = duration_s - end_offset_s
+        max_time_s = samples.select(pl.col("time_s").max()).item()
+        if max_time_s is None:
+            return pl.DataFrame()
+        end_s = int(max_time_s) - end_offset_s
+        if end_s < start_offset_s:
+            return pl.DataFrame()
         samples = samples.filter(
             (pl.col("time_s") >= start_offset_s) & (pl.col("time_s") <= end_s)
         )
