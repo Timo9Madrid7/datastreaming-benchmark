@@ -128,8 +128,8 @@ bool Payload::deserialize(const void *raw_message, size_t len,
 	std::memcpy(&id_len, data + offset, sizeof(id_len));
 	offset += sizeof(id_len);
 
-	std::string message_id(data + offset, id_len);
-	offset += id_len;
+	out.message_id.assign(data + offset, static_cast<size_t>(id_len));
+	offset += static_cast<size_t>(id_len);
 
 	uint8_t kind_byte = 0;
 	std::memcpy(&kind_byte, data + offset, sizeof(kind_byte));
@@ -144,12 +144,12 @@ bool Payload::deserialize(const void *raw_message, size_t len,
 		return false;
 	}
 
-	std::vector<uint8_t> payload_data(data + offset, data + offset + data_size);
-
-	out.message_id = std::move(message_id);
 	out.kind = kind_payload;
 	out.data_size = data_size;
-	out.data = std::move(payload_data);
+	out.data.resize(data_size);
+	if (data_size > 0) {
+		std::memcpy(out.data.data(), data + offset, data_size);
+	}
 
 	return true;
 }
@@ -166,10 +166,11 @@ bool Payload::deserialize_id(const void *raw_message, size_t len,
 	uint16_t id_len = 0;
 	std::memcpy(&id_len, data + offset, sizeof(id_len));
 	offset += sizeof(id_len);
+	if (len < offset + static_cast<size_t>(id_len)) {
+		return false;
+	}
 
-	std::string message_id(data + offset, id_len);
-
-	out.message_id = std::move(message_id);
+	out.message_id.assign(data + offset, static_cast<size_t>(id_len));
 
 	return true;
 }
