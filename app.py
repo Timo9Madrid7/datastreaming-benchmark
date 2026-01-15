@@ -7,6 +7,7 @@ from analysis.metrics import (
     average_curve,
     average_latency,
     latency_stats_for_run,
+    latency_samples_for_run,
     resource_usage_for_run,
     throughput_for_run,
 )
@@ -32,8 +33,17 @@ def load_throughput(
 
 
 @st.cache_data(show_spinner=False)
-def load_latency_stats(scenario: str, tech: str, run: str) -> pl.DataFrame:
+def load_latency_stats(
+    scenario: str,
+    tech: str,
+    run: str,
+) -> pl.DataFrame:
     return latency_stats_for_run(scenario, tech, run)
+
+
+@st.cache_data(show_spinner=False)
+def load_latency_samples(scenario: str, tech: str, run: str) -> pl.DataFrame:
+    return latency_samples_for_run(scenario, tech, run)
 
 
 @st.cache_data(show_spinner=False)
@@ -56,6 +66,71 @@ def main() -> None:
         st.error("Could not infer scenario duration from logs.")
         return
     st.sidebar.caption(f"Duration inferred from logs: {duration_s}s")
+
+    st.sidebar.subheader("Trim unstable edges")
+    max_offset = max(0, int(duration_s))
+    start_offset_s = int(
+        st.sidebar.number_input(
+            "Start offset (s)",
+            min_value=0,
+            max_value=max_offset,
+            value=min(5, max_offset),
+            step=1,
+            help="Ignore the first N seconds for throughput and latency.",
+        )
+    )
+    end_offset_s = int(
+        st.sidebar.number_input(
+            "End offset (s)",
+            min_value=0,
+            max_value=max_offset,
+            value=min(5, max_offset),
+            step=1,
+            help="Ignore the last N seconds for throughput and latency.",
+        )
+    )
+    if start_offset_s + end_offset_s >= duration_s:
+        st.sidebar.error(
+            "Start offset + end offset must be smaller than duration."
+        )
+        return
+    st.sidebar.caption(
+        f"Effective window: {start_offset_s}s .. {duration_s - end_offset_s}s"
+    )
+
+    def _trim_throughput_window(frame: pl.DataFrame) -> pl.DataFrame:
+        if frame.is_empty():
+            return frame
+        end_s = duration_s - end_offset_s
+        return frame.filter(
+            (pl.col("time_s") >= start_offset_s) & (pl.col("time_s") <= end_s)
+        )
+
+    def _latency_stats_with_offset(scenario: str, tech: str, run: str) -> pl.DataFrame:
+        if start_offset_s == 0 and end_offset_s == 0:
+            return load_latency_stats(scenario, tech, run)
+
+        samples = load_latency_samples(scenario, tech, run)
+        if samples.is_empty():
+            return pl.DataFrame()
+
+        end_s = duration_s - end_offset_s
+        samples = samples.filter(
+            (pl.col("time_s") >= start_offset_s) & (pl.col("time_s") <= end_s)
+        )
+        if samples.is_empty():
+            return pl.DataFrame()
+
+        return (
+            samples.group_by("segment")
+            .agg(
+                pl.col("latency_ms").quantile(0.50).alias("p50_ms"),
+                pl.col("latency_ms").quantile(0.90).alias("p90_ms"),
+                pl.col("latency_ms").quantile(0.99).alias("p99_ms"),
+                pl.col("latency_ms").max().alias("max_ms"),
+            )
+            .sort("segment")
+        )
 
     techs_available = sorted(scenarios[scenario].keys())
     selected_techs = st.sidebar.multiselect(
@@ -111,14 +186,21 @@ def main() -> None:
             if run not in selected_runs:
                 continue
             for event_type in throughput_event_types:
-                throughput = load_throughput(scenario, tech, run, window_s, event_type)
+                throughput = load_throughput(
+                    scenario,
+                    tech,
+                    run,
+                    window_s,
+                    event_type,
+                )
+                throughput = _trim_throughput_window(throughput)
                 if not throughput.is_empty():
                     run_frames_by_event[event_type].append(
                         throughput.with_columns(
                             pl.lit(tech).alias("tech"), pl.lit(run).alias("run")
                         )
                     )
-            latency_stats = load_latency_stats(scenario, tech, run)
+            latency_stats = _latency_stats_with_offset(scenario, tech, run)
             if not latency_stats.is_empty():
                 latency_stats_frames.append(latency_stats)
             resources = load_resources(scenario, tech, run)
@@ -202,8 +284,17 @@ def main() -> None:
                 frame
                 for tech in selected_techs
                 for frame in [
-                    load_throughput(scenario, tech, run, window_s, event_type)
-                    .with_columns(pl.lit(tech).alias("tech"), pl.lit(run).alias("run"))
+                    _trim_throughput_window(
+                        load_throughput(
+                            scenario,
+                            tech,
+                            run,
+                            window_s,
+                            event_type,
+                        )
+                    ).with_columns(
+                        pl.lit(tech).alias("tech"), pl.lit(run).alias("run")
+                    )
                     for run in runs_by_tech.get(tech, [])
                     if run in selected_runs
                 ]
