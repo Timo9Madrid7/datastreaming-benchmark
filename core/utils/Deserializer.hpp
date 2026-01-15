@@ -77,7 +77,18 @@ class Deserializer {
 		// Best-effort drain to release holders promptly.
 		Item item;
 		while (queue_.try_dequeue(item)) {
-			// drop
+			// decode the remaining items to log study lines
+			if (decode_) {
+				std::string topic = item.topic;
+				Payload payload;
+				const bool ok = decode_(item.data, item.len, topic, payload);
+				if (ok) {
+					this->log_study_("Deserialized," + payload.message_id + ","
+					                 + topic + ","
+					                 + std::to_string(payload.data_size)
+					                 + "," + std::to_string(item.len));
+				}
+			}
 		}
 	}
 

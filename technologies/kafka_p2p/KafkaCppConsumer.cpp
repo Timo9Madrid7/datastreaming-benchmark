@@ -202,18 +202,24 @@ void KafkaCppConsumer::start_loop() {
 			continue;
 		}
 
-		Payload payload;
-		logger->log_info("[Kafka Consumer] Received message on topic '" + topic
-		                 + "' with " + std::to_string(msg->len()) + " bytes");
-
-		if (!Payload::deserialize_id(msg->payload(), msg->len(), payload)) {
-			logger->log_error("[Kafka Consumer] Deserialization failed for "
-			                  "message on topic: "
-			                  + topic);
-			continue;
+		std::string message_id;
+		if (const std::string *key_ptr = msg->key(); key_ptr != nullptr) {
+			message_id = *key_ptr;
+		}
+		if (message_id.empty()) {
+			Payload id_payload;
+			if (!Payload::deserialize_id(msg->payload(), msg->len(), id_payload)) {
+				logger->log_error("[Kafka Consumer] Deserialization failed for "
+				              "message on topic: "
+				              + topic);
+				continue;
+			}
+			message_id = id_payload.message_id;
 		}
 
-		logger->log_study("Reception," + payload.message_id + "," + topic);
+		logger->log_debug("[Kafka Consumer] Received message on topic '" + topic
+		                 + "' with " + std::to_string(msg->len()) + " bytes");
+		logger->log_study("Reception," + message_id + "," + topic);
 
 		RdKafka::Message *raw = msg.release();
 		utils::Deserializer::Item item;
@@ -222,7 +228,7 @@ void KafkaCppConsumer::start_loop() {
 		item.data = raw->payload();
 		item.len = static_cast<size_t>(raw->len());
 		item.topic = topic;
-		item.message_id = payload.message_id;
+		item.message_id = message_id;
 		if (!deserializer_.enqueue(std::move(item))) {
 			logger->log_error(
 			    "[Kafka Consumer] Deserializer queue full; dropping message.");
