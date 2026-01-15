@@ -93,7 +93,7 @@ class Deserializer {
 	}
 
 	bool enqueue(Item item) {
-		return queue_.try_enqueue(std::move(item));
+		return queue_.enqueue(std::move(item));
 	}
 
 	bool is_running() const {

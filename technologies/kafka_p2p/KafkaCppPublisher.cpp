@@ -39,10 +39,17 @@ KafkaCppPublisher::~KafkaCppPublisher() {
 }
 
 void KafkaCppPublisher::initialize() {
-	const std::string vendpoint =
+	std::string vendpoint =
 	    utils::get_env_var_or_default("PUBLISHER_ENDPOINT", "localhost");
 	const std::string port =
 	    utils::get_env_var_or_default("PUBLISHER_PORT", "9092");
+	// 0.0.0.0 is valid for bind(), not for connect(). Treat it as a common
+	// misconfiguration and default to localhost (broker runs in-container for kafka_p2p).
+	if (vendpoint == "0.0.0.0") {
+		logger->log_error(
+		    "[Kafka Publisher] PUBLISHER_ENDPOINT=0.0.0.0 is not a valid broker address; using localhost instead.");
+		vendpoint = "localhost";
+	}
 	broker_ = vendpoint + ":" + port;
 	logger->log_info("[Kafka Publisher] Using broker: " + broker_);
 
