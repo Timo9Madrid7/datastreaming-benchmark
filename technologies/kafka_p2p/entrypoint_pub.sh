@@ -32,6 +32,27 @@ until /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server "${BROKER_I
   sleep 0.5
 done
 
+# Pre-create topics to avoid auto-create/metadata delays impacting early messages.
+if [ -n "${TOPICS:-}" ]; then
+  PARTITIONS="${KAFKA_TOPIC_PARTITIONS:-4}"
+  REPL_FACTOR="${KAFKA_TOPIC_REPLICATION_FACTOR:-1}"
+  old_ifs="$IFS"
+  IFS=','
+  for t in $TOPICS; do
+    # trim whitespace
+    topic_name="$(echo "$t" | xargs)"
+    if [ -n "$topic_name" ]; then
+      /opt/kafka/bin/kafka-topics.sh \
+        --bootstrap-server "${BROKER_IP}:9092" \
+        --create --if-not-exists \
+        --replication-factor "${REPL_FACTOR}" \
+        --partitions "${PARTITIONS}" \
+        --topic "$topic_name" >/dev/null 2>&1 || true
+    fi
+  done
+  IFS="$old_ifs"
+fi
+
 if [ $# -eq 0 ]; then
   set -- INFO DEBUG STUDY ERROR
 fi

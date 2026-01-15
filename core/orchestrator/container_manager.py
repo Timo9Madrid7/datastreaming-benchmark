@@ -285,6 +285,10 @@ class ContainerManager:
                 "TOPICS": ",".join(topics_list),
                 "BACKLOG_SIZE": backlog_size,
             }
+            if tech_name == "kafka_p2p":
+                # Allow multiple consumers to split partitions and scale throughput.
+                # Without this, each consumer uses its own group and receives the full stream.
+                environment["KAFKA_GROUP_ID"] = "benchmark_kafka_p2p_group"
             if "p2p" in tech_name:
                 logger.debug(f"Using p2p broker {publishers_list}")
                 environment["CONSUMER_ENDPOINT"] = ",".join(publishers_list)

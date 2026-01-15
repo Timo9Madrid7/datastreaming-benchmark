@@ -1,9 +1,11 @@
 #include "KafkaCppConsumer.hpp"
 
+#include <chrono>
 #include <librdkafka/rdkafkacpp.h>
 #include <memory>
 #include <optional>
 #include <sstream>
+#include <thread>
 #include <unordered_set>
 #include <utility>
 
@@ -40,7 +42,42 @@ void KafkaCppConsumer::initialize() {
 	    utils::get_env_var_or_default("CONSUMER_ENDPOINT", "localhost");
 	const std::string port =
 	    utils::get_env_var_or_default("CONSUMER_PORT", "9092");
-	broker_ = vendpoint + ":" + port;
+	// Support both a single host and a comma-separated host list.
+	// librdkafka expects: host:port,host:port,...
+	auto build_bootstrap_servers = [](const std::string &endpoints,
+	                                  const std::string &default_port) {
+		std::string out;
+		std::string token;
+		std::istringstream iss(endpoints);
+		bool first = true;
+		while (std::getline(iss, token, ',')) {
+			auto start = token.find_first_not_of(" \t");
+			if (start == std::string::npos) {
+				continue;
+			}
+			auto end = token.find_last_not_of(" \t");
+			std::string host = token.substr(start, end - start + 1);
+			if (host.empty()) {
+				continue;
+			}
+			if (!first) {
+				out += ",";
+			}
+			first = false;
+			// If already has a port, keep it.
+			if (host.find(':') != std::string::npos) {
+				out += host;
+			} else {
+				out += host + ":" + default_port;
+			}
+		}
+		return out;
+	};
+
+	broker_ = build_bootstrap_servers(vendpoint, port);
+	if (broker_.empty()) {
+		broker_ = std::string("localhost:") + port;
+	}
 	logger->log_info("[Kafka Consumer] Using broker: " + broker_);
 
 	const std::optional<std::string> consumer_id =
@@ -60,7 +97,16 @@ void KafkaCppConsumer::initialize() {
 		throw std::runtime_error(err_msg);
 	}
 
-	const std::string group_id = "benchmark_group_" + consumer_id.value();
+	// If multiple consumer containers should split the stream, they must share
+	// the same consumer group. Default keeps backwards behavior (one group per
+	// container => each consumer receives the full stream).
+	const std::optional<std::string> env_group_id =
+	    utils::get_env_var("KAFKA_GROUP_ID");
+	const std::string group_id =
+	    (env_group_id && !env_group_id->empty())
+	        ? env_group_id.value()
+	        : ("benchmark_group_" + consumer_id.value());
+	logger->log_info("[Kafka Consumer] Using group.id: " + group_id);
 
 	conf_.reset(RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL));
 	if (!conf_) {
@@ -97,9 +143,19 @@ void KafkaCppConsumer::initialize() {
 		throw std::runtime_error("Failed to set auto.offset.reset: " + err_msg);
 	}
 
-	// Low Latency Configuration
-	conf_->set("fetch.min.bytes", "1048576", err_msg);
-	conf_->set("fetch.wait.max.ms", "20", err_msg);
+	// Startup robustness: in this benchmark the broker and consumers are
+	// unpaused simultaneously. If the consumer attempts to connect before the
+	// broker is ready, librdkafka's reconnect backoff can grow to seconds,
+	// inflating Publication->Reception latency. Keep backoff tight.
+	conf_->set("reconnect.backoff.ms", "50", err_msg);
+	conf_->set("reconnect.backoff.max.ms", "500", err_msg);
+
+	// Latency-focused fetch settings for small payloads.
+	// The previous fetch.min.bytes=1MB can add significant buffering delay when
+	// payloads are ~1KB and rates are modest.
+	conf_->set("fetch.min.bytes", "1", err_msg);
+	conf_->set("fetch.wait.max.ms", "5", err_msg);
+
 	conf_->set("max.partition.fetch.bytes", "8388608", err_msg);
 	conf_->set("fetch.message.max.bytes", "8388608", err_msg);
 	conf_->set("queued.max.messages.kbytes", "4194304", err_msg);
@@ -110,6 +166,34 @@ void KafkaCppConsumer::initialize() {
 		logger->log_error("[Kafka Consumer] Failed to create consumer: "
 		                  + err_msg);
 		throw std::runtime_error("Failed to create consumer: " + err_msg);
+	}
+
+	// Wait for broker metadata before subscribing/consuming to avoid starting
+	// in a long reconnect backoff window.
+	{
+		using namespace std::chrono_literals;
+		auto deadline = std::chrono::steady_clock::now() + 30s;
+		auto last_log = std::chrono::steady_clock::now() - 10s;
+		while (std::chrono::steady_clock::now() < deadline) {
+			RdKafka::Metadata *metadata = nullptr;
+			RdKafka::ErrorCode ec =
+			    consumer_->metadata(false, nullptr, &metadata, 2000);
+			if (metadata != nullptr) {
+				delete metadata;
+				metadata = nullptr;
+			}
+			if (ec == RdKafka::ERR_NO_ERROR) {
+				break;
+			}
+			auto now = std::chrono::steady_clock::now();
+			if (now - last_log >= 2s) {
+				logger->log_info(
+				    "[Kafka Consumer] Waiting for broker readiness: "
+				    + RdKafka::err2str(ec));
+				last_log = now;
+			}
+			std::this_thread::sleep_for(200ms);
+		}
 	}
 
 	std::istringstream topics(vtopics.value_or(""));
@@ -174,7 +258,7 @@ void KafkaCppConsumer::start_loop() {
 
 	while (!stop_receiving_) {
 		logger->log_debug("[Kafka Consumer] Polling for messages...");
-		std::unique_ptr<RdKafka::Message> msg(consumer_->consume(2000));
+		std::unique_ptr<RdKafka::Message> msg(consumer_->consume(50));
 
 		if (!msg) {
 			logger->log_debug("[Kafka Consumer] Poll returned null message");
@@ -208,17 +292,18 @@ void KafkaCppConsumer::start_loop() {
 		}
 		if (message_id.empty()) {
 			Payload id_payload;
-			if (!Payload::deserialize_id(msg->payload(), msg->len(), id_payload)) {
+			if (!Payload::deserialize_id(msg->payload(), msg->len(),
+			                             id_payload)) {
 				logger->log_error("[Kafka Consumer] Deserialization failed for "
-				              "message on topic: "
-				              + topic);
+				                  "message on topic: "
+				                  + topic);
 				continue;
 			}
 			message_id = id_payload.message_id;
 		}
 
 		logger->log_debug("[Kafka Consumer] Received message on topic '" + topic
-		                 + "' with " + std::to_string(msg->len()) + " bytes");
+		                  + "' with " + std::to_string(msg->len()) + " bytes");
 		logger->log_study("Reception," + message_id + "," + topic);
 
 		RdKafka::Message *raw = msg.release();
