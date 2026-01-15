@@ -12,7 +12,8 @@
 #include "Utils.hpp"
 
 KafkaCppConsumer::KafkaCppConsumer(std::shared_ptr<Logger> logger)
-    : IConsumer(logger), consumer_(nullptr), conf_(nullptr) {
+    : IConsumer(logger), consumer_(nullptr), conf_(nullptr),
+      deserializer_(logger) {
 	logger->log_info("[Kafka Consumer] KafkaConsumer created.");
 }
 
@@ -25,7 +26,7 @@ KafkaCppConsumer::~KafkaCppConsumer() {
 		}
 
 		stop_receiving_ = true;
-		stop_deserialize_thread_();
+		deserializer_.stop();
 
 		consumer_->close();
 		consumer_.reset();
@@ -150,7 +151,26 @@ void KafkaCppConsumer::subscribe(const std::string &topic) {
 }
 
 void KafkaCppConsumer::start_loop() {
-	start_deserialize_thread_();
+	deserializer_.start(
+	    [](const void *data, size_t len, std::string & /*topic*/,
+	       Payload &out) { return Payload::deserialize(data, len, out); },
+	    [this](const Payload &payload, const std::string & /*topic*/,
+	           size_t /*raw_len*/) {
+		    if (payload.kind == PayloadKind::TERMINATION) {
+			    subscribed_streams.dec();
+			    logger->log_info("[Kafka Consumer] Termination signal received "
+			                     "for message ID: "
+			                     + payload.message_id);
+			    if (subscribed_streams.get() == 0) {
+				    logger->log_info(
+				        "[Kafka Consumer] All streams terminated. Exiting.");
+				    stop_receiving_ = true;
+			    }
+			    logger->log_info(
+			        "[Kafka Consumer] Remaining subscribed streams: "
+			        + std::to_string(subscribed_streams.get()));
+		    }
+	    });
 
 	while (!stop_receiving_) {
 		logger->log_debug("[Kafka Consumer] Polling for messages...");
@@ -195,10 +215,21 @@ void KafkaCppConsumer::start_loop() {
 
 		logger->log_study("Reception," + payload.message_id + "," + topic);
 
-		deserialize_queue_.enqueue(std::move(msg));
+		RdKafka::Message *raw = msg.release();
+		utils::Deserializer::Item item;
+		item.holder = std::shared_ptr<void>(
+		    raw, [](void *p) { delete static_cast<RdKafka::Message *>(p); });
+		item.data = raw->payload();
+		item.len = static_cast<size_t>(raw->len());
+		item.topic = topic;
+		item.message_id = payload.message_id;
+		if (!deserializer_.enqueue(std::move(item))) {
+			logger->log_error(
+			    "[Kafka Consumer] Deserializer queue full; dropping message.");
+		}
 	}
 
-	stop_deserialize_thread_();
+	deserializer_.stop();
 }
 
 void KafkaCppConsumer::log_configuration() {
@@ -211,56 +242,4 @@ void KafkaCppConsumer::log_configuration() {
 	logger->log_config("[Kafka Consumer] [CONFIG_END]");
 }
 
-void KafkaCppConsumer::start_deserialize_thread_() {
-	stop_deserialization_ = false;
-	stop_receiving_ = false;
-
-	deserialize_thread_ = std::thread([this]() {
-		while (!stop_deserialization_ || deserialize_queue_.size_approx() > 0) {
-			std::unique_ptr<RdKafka::Message> msg;
-			if (!deserialize_queue_.try_dequeue(msg)) {
-				std::this_thread::yield();
-				continue;
-			}
-
-			const std::string topic =
-			    !msg->topic_name().empty() ? msg->topic_name() : "unknown";
-			const void *data_ptr = msg->payload();
-			const size_t data_len = static_cast<size_t>(msg->len());
-
-			Payload payload;
-			bool ok = Payload::deserialize(data_ptr, data_len, payload);
-
-			if (!ok) {
-				logger->log_error("[Kafka Consumer] Deserialization failed.");
-				continue;
-			}
-
-			logger->log_study("Deserialized," + payload.message_id + "," + topic
-			                  + "," + std::to_string(payload.data_size) + ","
-			                  + std::to_string(data_len));
-
-			if (payload.kind == PayloadKind::TERMINATION) {
-				subscribed_streams.dec();
-				logger->log_info("[Kafka Consumer] Termination signal received "
-				                 "for message ID: "
-				                 + payload.message_id);
-				if (subscribed_streams.get() == 0) {
-					logger->log_info(
-					    "[Kafka Consumer] All streams terminated. Exiting.");
-					stop_receiving_ = true;
-				}
-				logger->log_info(
-				    "[Kafka Consumer] Remaining subscribed streams: "
-				    + std::to_string(subscribed_streams.get()));
-			}
-		}
-	});
-}
-
-void KafkaCppConsumer::stop_deserialize_thread_() {
-	stop_deserialization_ = true;
-	if (deserialize_thread_.joinable()) {
-		deserialize_thread_.join();
-	}
-}
+// Deserialization worker is implemented by utils::Deserializer

@@ -4,8 +4,9 @@
 #include <memory>
 #include <vector>
 
+#include "Deserializer.hpp"
 #include "IConsumer.hpp"
-#include "readerwriterqueue.h"
+
 
 class KafkaCppConsumer : public IConsumer {
   public:
@@ -24,12 +25,6 @@ class KafkaCppConsumer : public IConsumer {
 	std::unique_ptr<RdKafka::KafkaConsumer> consumer_;
 	std::unique_ptr<RdKafka::Conf> conf_;
 
-	std::thread deserialize_thread_;
-	std::atomic<bool> stop_deserialization_{false};
+	utils::Deserializer deserializer_;
 	std::atomic<bool> stop_receiving_{false};
-	moodycamel::ReaderWriterQueue<std::unique_ptr<RdKafka::Message>>
-	    deserialize_queue_{1024};
-
-	void start_deserialize_thread_();
-	void stop_deserialize_thread_();
 };

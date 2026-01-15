@@ -29,7 +29,7 @@ std::string build_nats_url(const std::string &endpoint,
 
 NatsConsumer::NatsConsumer(std::shared_ptr<Logger> logger)
     : IConsumer(logger), connection_(nullptr, &natsConnection_Destroy),
-      subscription_(nullptr, &natsSubscription_Destroy) {
+      subscription_(nullptr, &natsSubscription_Destroy), deserializer_(logger) {
 	logger->log_info("[NATS Consumer] NatsConsumer created.");
 }
 
@@ -37,7 +37,7 @@ NatsConsumer::~NatsConsumer() {
 	logger->log_debug("[NATS Consumer] Cleaning up NATS consumer...");
 
 	stop_receiving_ = true;
-	stop_deserialize_thread_();
+	deserializer_.stop();
 
 	subscription_.reset();
 	connection_.reset();
@@ -135,7 +135,26 @@ void NatsConsumer::subscribe(const std::string &subject) {
 }
 
 void NatsConsumer::start_loop() {
-	start_deserialize_thread_();
+	deserializer_.start(
+	    [](const void *data, size_t len, std::string & /*topic*/,
+	       Payload &out) { return Payload::deserialize(data, len, out); },
+	    [this](const Payload &payload, const std::string & /*topic*/,
+	           size_t /*raw_len*/) {
+		    if (payload.kind == PayloadKind::TERMINATION) {
+			    subscribed_streams.dec();
+			    logger->log_info("[NATS Consumer] Termination signal received "
+			                     "for message ID: "
+			                     + payload.message_id);
+			    if (subscribed_streams.get() == 0) {
+				    logger->log_info(
+				        "[NATS Consumer] All streams terminated. Exiting.");
+				    stop_receiving_ = true;
+			    }
+			    logger->log_info(
+			        "[NATS Consumer] Remaining subscribed streams: "
+			        + std::to_string(subscribed_streams.get()));
+		    }
+	    });
 
 	while (!stop_receiving_) {
 		natsMsg *msg = nullptr;
@@ -168,10 +187,20 @@ void NatsConsumer::start_loop() {
 		logger->log_study("Reception," + payload.message_id + ","
 		                  + subject_str);
 
-		deserialize_queue_.enqueue(msg);
+		utils::Deserializer::Item item;
+		item.holder = std::shared_ptr<void>(
+		    msg, [](void *p) { natsMsg_Destroy(static_cast<natsMsg *>(p)); });
+		item.data = data_ptr;
+		item.len = data_len;
+		item.topic = subject_str;
+		item.message_id = payload.message_id;
+		if (!deserializer_.enqueue(std::move(item))) {
+			logger->log_error(
+			    "[NATS Consumer] Deserializer queue full; dropping message.");
+		}
 	}
 
-	stop_deserialize_thread_();
+	deserializer_.stop();
 }
 
 void NatsConsumer::log_configuration() {
@@ -182,66 +211,4 @@ void NatsConsumer::log_configuration() {
 	logger->log_config("[NATS Consumer] [CONFIG_END]");
 }
 
-void NatsConsumer::start_deserialize_thread_() {
-	stop_deserialization_ = false;
-	stop_receiving_ = false;
-
-	deserialize_thread_ = std::thread([this]() {
-		while (!stop_deserialization_ || deserialize_queue_.size_approx() > 0) {
-			natsMsg *msg;
-			if (!deserialize_queue_.try_dequeue(msg)) {
-				std::this_thread::yield();
-				continue;
-			}
-
-			const char *subject = natsMsg_GetSubject(msg);
-			const std::string subject_str = subject ? subject : "";
-			const void *data_ptr = natsMsg_GetData(msg);
-			const size_t data_len =
-			    static_cast<size_t>(natsMsg_GetDataLength(msg));
-
-			Payload payload;
-			bool ok = Payload::deserialize(data_ptr, data_len, payload);
-			natsMsg_Destroy(msg);
-
-			if (!ok) {
-				logger->log_error("[NATS Consumer] Deserialization failed.");
-				continue;
-			}
-
-			logger->log_study("Deserialized," + payload.message_id + ","
-			                  + subject_str + ","
-			                  + std::to_string(payload.data_size) + ","
-			                  + std::to_string(data_len));
-
-			if (payload.kind == PayloadKind::TERMINATION) {
-				subscribed_streams.dec();
-				logger->log_info("[NATS Consumer] Termination signal received "
-				                 "for message ID: "
-				                 + payload.message_id);
-				if (subscribed_streams.get() == 0) {
-					logger->log_info(
-					    "[NATS Consumer] All streams terminated. Exiting.");
-					stop_receiving_ = true;
-				}
-				logger->log_info(
-				    "[NATS Consumer] Remaining subscribed streams: "
-				    + std::to_string(subscribed_streams.get()));
-			}
-		}
-	});
-}
-
-void NatsConsumer::stop_deserialize_thread_() {
-	stop_deserialization_ = true;
-	if (deserialize_thread_.joinable()) {
-		deserialize_thread_.join();
-	}
-
-	natsMsg *msg;
-	while (deserialize_queue_.try_dequeue(msg)) {
-		if (msg) {
-			natsMsg_Destroy(msg);
-		}
-	}
-}
+// Deserialization worker is implemented by utils::Deserializer

@@ -8,7 +8,6 @@
 #include <stdexcept>
 #include <string>
 #include <sys/types.h>
-#include <thread>
 #include <unordered_set>
 #include <utility>
 #include <zmq.h>
@@ -58,7 +57,8 @@ bool ZeroMQP2PConsumer::deserialize_id(const void *raw_message, size_t len,
 }
 
 ZeroMQP2PConsumer::ZeroMQP2PConsumer(std::shared_ptr<Logger> logger) try
-    : IConsumer(logger), context(1), subscriber(context, ZMQ_SUB) {
+    : IConsumer(logger), context(1), subscriber(context, ZMQ_SUB),
+      deserializer_(logger) {
 	subscriber.set(zmq::sockopt::rcvtimeo, 10000);
 	logger->log_debug("[ZeroMQP2P Consumer] Constructor finished");
 } catch (const zmq::error_t &e) {
@@ -70,7 +70,7 @@ ZeroMQP2PConsumer::ZeroMQP2PConsumer(std::shared_ptr<Logger> logger) try
 
 ZeroMQP2PConsumer::~ZeroMQP2PConsumer() {
 	stop_receiving_ = true;
-	stop_deserialize_thread_();
+	deserializer_.stop();
 
 	subscriber.close();
 	context.close();
@@ -167,7 +167,27 @@ void ZeroMQP2PConsumer::subscribe(const std::string &topic) {
 }
 
 void ZeroMQP2PConsumer::start_loop() {
-	start_deserialize_thread_();
+	deserializer_.start(
+	    [this](const void *data, size_t len, std::string &topic, Payload &out) {
+		    return this->deserialize(data, len, topic, out);
+	    },
+	    [this](const Payload &payload, const std::string & /*topic*/,
+	           size_t /*raw_len*/) {
+		    if (payload.kind == PayloadKind::TERMINATION) {
+			    subscribed_streams.dec();
+			    logger->log_info("[ZeroMQP2P Consumer] Termination signal "
+			                     "received for message ID: "
+			                     + payload.message_id);
+			    if (subscribed_streams.get() == 0) {
+				    logger->log_info("[ZeroMQP2P Consumer] All streams "
+				                     "terminated. Exiting.");
+				    stop_receiving_ = true;
+			    }
+			    logger->log_info(
+			        "[ZeroMQP2P Consumer] Remaining subscribed streams: "
+			        + std::to_string(subscribed_streams.get()));
+		    }
+	    });
 
 	while (!stop_receiving_) {
 		try {
@@ -192,7 +212,17 @@ void ZeroMQP2PConsumer::start_loop() {
 
 			logger->log_study("Reception," + payload.message_id + "," + topic);
 
-			deserialize_queue_.enqueue(std::move(msg));
+			auto holder = std::make_shared<zmq::message_t>(std::move(msg));
+			utils::Deserializer::Item item;
+			item.holder = holder;
+			item.data = holder->data();
+			item.len = holder->size();
+			item.topic = topic;
+			item.message_id = payload.message_id;
+			if (!deserializer_.enqueue(std::move(item))) {
+				logger->log_error("[ZeroMQP2P Consumer] Deserializer queue "
+				                  "full; dropping message.");
+			}
 		} catch (const zmq::error_t &e) {
 			logger->log_error("[ZeroMQP2P Consumer] Receive failed: "
 			                  + std::string(e.what()));
@@ -200,7 +230,7 @@ void ZeroMQP2PConsumer::start_loop() {
 		}
 	}
 
-	stop_deserialize_thread_();
+	deserializer_.stop();
 }
 
 void ZeroMQP2PConsumer::log_configuration() {
@@ -231,57 +261,4 @@ void ZeroMQP2PConsumer::log_configuration() {
 	logger->log_config("[ZeroMQP2P Consumer] [CONFIG_END]");
 }
 
-void ZeroMQP2PConsumer::start_deserialize_thread_() {
-	stop_deserialization_ = false;
-	stop_receiving_ = false;
-
-	deserialize_thread_ = std::thread([this]() {
-		while (!stop_deserialization_ || deserialize_queue_.size_approx() > 0) {
-			zmq::message_t msg;
-			if (!deserialize_queue_.try_dequeue(msg)) {
-				std::this_thread::yield();
-				continue;
-			}
-
-			const void *data_ptr = msg.data();
-			const size_t data_len = msg.size();
-
-			Payload payload;
-			std::string topic;
-			bool ok = deserialize(data_ptr, data_len, topic, payload);
-
-			if (!ok) {
-				logger->log_error(
-				    "[ZeroMQP2P Consumer] Deserialization failed.");
-				continue;
-			}
-
-			logger->log_study("Deserialized," + payload.message_id + "," + topic
-			                  + "," + std::to_string(payload.data_size) + ","
-			                  + std::to_string(data_len));
-
-			if (payload.kind == PayloadKind::TERMINATION) {
-				subscribed_streams.dec();
-				logger->log_info(
-				    "[ZeroMQP2P Consumer] Termination signal received "
-				    "for message ID: "
-				    + payload.message_id);
-				if (subscribed_streams.get() == 0) {
-					logger->log_info("[ZeroMQP2P Consumer] All streams "
-					                 "terminated. Exiting.");
-					stop_receiving_ = true;
-				}
-				logger->log_info(
-				    "[ZeroMQP2P Consumer] Remaining subscribed streams: "
-				    + std::to_string(subscribed_streams.get()));
-			}
-		}
-	});
-}
-
-void ZeroMQP2PConsumer::stop_deserialize_thread_() {
-	stop_deserialization_ = true;
-	if (deserialize_thread_.joinable()) {
-		deserialize_thread_.join();
-	}
-}
+// Deserialization worker is implemented by utils::Deserializer

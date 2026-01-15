@@ -4,10 +4,10 @@
 #include <memory>      // for shared_ptr, unique_ptr
 #include <nats/nats.h> // for natsSubscription_Destroy, natsConnect...
 #include <string>      // for string
-#include <thread>      // for thread
 
-#include "IConsumer.hpp"       // for IConsumer
-#include "readerwriterqueue.h" // for ReaderWriterQueue
+#include "Deserializer.hpp"
+#include "IConsumer.hpp" // for IConsumer
+
 
 class Logger;
 
@@ -31,11 +31,6 @@ class NatsConsumer : public IConsumer {
 
 	std::string nats_url_;
 
-	std::thread deserialize_thread_;
-	std::atomic<bool> stop_deserialization_{false};
+	utils::Deserializer deserializer_;
 	std::atomic<bool> stop_receiving_{false};
-	moodycamel::ReaderWriterQueue<natsMsg *> deserialize_queue_{1024};
-
-	void start_deserialize_thread_();
-	void stop_deserialize_thread_();
 };
