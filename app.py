@@ -182,7 +182,10 @@ def main() -> None:
     latency_frames: list[pl.DataFrame] = []
     cpu_frames: list[pl.DataFrame] = []
     memory_frames: list[pl.DataFrame] = []
+    page_cache_frames: list[pl.DataFrame] = []
     disk_frames: list[pl.DataFrame] = []
+    network_rx_frames: list[pl.DataFrame] = []
+    network_tx_frames: list[pl.DataFrame] = []
 
     for tech in selected_techs:
         run_frames_by_event: dict[str, list[pl.DataFrame]] = {
@@ -191,7 +194,10 @@ def main() -> None:
         latency_stats_frames = []
         cpu_runs = []
         mem_runs = []
+        page_cache_runs = []
         disk_runs = []
+        net_rx_runs = []
+        net_tx_runs = []
         for run in runs_by_tech.get(tech, []):
             if run not in selected_runs:
                 continue
@@ -227,8 +233,26 @@ def main() -> None:
                         pl.lit(run).alias("run"),
                     )
                 )
+                page_cache_runs.append(
+                    resources.select(["time_s", "page_cache_mb"]).with_columns(
+                        pl.lit(tech).alias("tech"),
+                        pl.lit(run).alias("run"),
+                    )
+                )
                 disk_runs.append(
                     resources.select(["time_s", "disk_throughput_mb_s"]).with_columns(
+                        pl.lit(tech).alias("tech"),
+                        pl.lit(run).alias("run"),
+                    )
+                )
+                net_rx_runs.append(
+                    resources.select(["time_s", "network_rx_mb_s"]).with_columns(
+                        pl.lit(tech).alias("tech"),
+                        pl.lit(run).alias("run"),
+                    )
+                )
+                net_tx_runs.append(
+                    resources.select(["time_s", "network_tx_mb_s"]).with_columns(
                         pl.lit(tech).alias("tech"),
                         pl.lit(run).alias("run"),
                     )
@@ -270,6 +294,16 @@ def main() -> None:
                     pl.lit(tech).alias("tech"), pl.lit("avg").alias("run")
                 )
             )
+        avg_page_cache = average_curve(
+            [frame.select(["time_s", "page_cache_mb"]) for frame in page_cache_runs],
+            "page_cache_mb",
+        )
+        if not avg_page_cache.is_empty():
+            page_cache_frames.append(
+                avg_page_cache.with_columns(
+                    pl.lit(tech).alias("tech"), pl.lit("avg").alias("run")
+                )
+            )
         avg_disk = average_curve(
             [frame.select(["time_s", "disk_throughput_mb_s"]) for frame in disk_runs],
             "disk_throughput_mb_s",
@@ -277,6 +311,26 @@ def main() -> None:
         if not avg_disk.is_empty():
             disk_frames.append(
                 avg_disk.with_columns(
+                    pl.lit(tech).alias("tech"), pl.lit("avg").alias("run")
+                )
+            )
+        avg_net_rx = average_curve(
+            [frame.select(["time_s", "network_rx_mb_s"]) for frame in net_rx_runs],
+            "network_rx_mb_s",
+        )
+        if not avg_net_rx.is_empty():
+            network_rx_frames.append(
+                avg_net_rx.with_columns(
+                    pl.lit(tech).alias("tech"), pl.lit("avg").alias("run")
+                )
+            )
+        avg_net_tx = average_curve(
+            [frame.select(["time_s", "network_tx_mb_s"]) for frame in net_tx_runs],
+            "network_tx_mb_s",
+        )
+        if not avg_net_tx.is_empty():
+            network_tx_frames.append(
+                avg_net_tx.with_columns(
                     pl.lit(tech).alias("tech"), pl.lit("avg").alias("run")
                 )
             )
@@ -363,6 +417,21 @@ def main() -> None:
     disk_display = (
         pl.concat(disk_frames, how="vertical") if disk_frames else pl.DataFrame()
     )
+    page_cache_display = (
+        pl.concat(page_cache_frames, how="vertical")
+        if page_cache_frames
+        else pl.DataFrame()
+    )
+    network_rx_display = (
+        pl.concat(network_rx_frames, how="vertical")
+        if network_rx_frames
+        else pl.DataFrame()
+    )
+    network_tx_display = (
+        pl.concat(network_tx_frames, how="vertical")
+        if network_tx_frames
+        else pl.DataFrame()
+    )
     if show_individual:
         for tech in selected_techs:
             for run in runs_by_tech.get(tech, []):
@@ -397,6 +466,36 @@ def main() -> None:
                         resources.select(
                             ["time_s", "disk_throughput_mb_s"]
                         ).with_columns(
+                            pl.lit(tech).alias("tech"),
+                            pl.lit(run).alias("run"),
+                        ),
+                    ],
+                    how="vertical",
+                )
+                page_cache_display = pl.concat(
+                    [
+                        page_cache_display,
+                        resources.select(["time_s", "page_cache_mb"]).with_columns(
+                            pl.lit(tech).alias("tech"),
+                            pl.lit(run).alias("run"),
+                        ),
+                    ],
+                    how="vertical",
+                )
+                network_rx_display = pl.concat(
+                    [
+                        network_rx_display,
+                        resources.select(["time_s", "network_rx_mb_s"]).with_columns(
+                            pl.lit(tech).alias("tech"),
+                            pl.lit(run).alias("run"),
+                        ),
+                    ],
+                    how="vertical",
+                )
+                network_tx_display = pl.concat(
+                    [
+                        network_tx_display,
+                        resources.select(["time_s", "network_tx_mb_s"]).with_columns(
                             pl.lit(tech).alias("tech"),
                             pl.lit(run).alias("run"),
                         ),
@@ -438,6 +537,36 @@ def main() -> None:
         tooltip=["time_s", "disk_throughput_mb_s", "tech", "run"],
         y_title="Disk Throughput (MB/s)",
     )
+    page_cache_chart = line_chart(
+        page_cache_display.with_columns(
+            (pl.col("tech") + " (" + pl.col("run") + ")").alias("series")
+        ),
+        x="time_s",
+        y="page_cache_mb",
+        color="series",
+        tooltip=["time_s", "page_cache_mb", "tech", "run"],
+        y_title="Page Cache (MB)",
+    )
+    network_rx_chart = line_chart(
+        network_rx_display.with_columns(
+            (pl.col("tech") + " (" + pl.col("run") + ")").alias("series")
+        ),
+        x="time_s",
+        y="network_rx_mb_s",
+        color="series",
+        tooltip=["time_s", "network_rx_mb_s", "tech", "run"],
+        y_title="Network In (MB/s)",
+    )
+    network_tx_chart = line_chart(
+        network_tx_display.with_columns(
+            (pl.col("tech") + " (" + pl.col("run") + ")").alias("series")
+        ),
+        x="time_s",
+        y="network_tx_mb_s",
+        color="series",
+        tooltip=["time_s", "network_tx_mb_s", "tech", "run"],
+        y_title="Network Out (MB/s)",
+    )
 
     st.subheader("CPU Usage")
     st.altair_chart(cpu_chart, width="stretch")
@@ -445,6 +574,12 @@ def main() -> None:
     st.altair_chart(memory_chart, width="stretch")
     st.subheader("Disk Throughput")
     st.altair_chart(disk_chart, width="stretch")
+    st.subheader("Page Cache")
+    st.altair_chart(page_cache_chart, width="stretch")
+    st.subheader("Network In")
+    st.altair_chart(network_rx_chart, width="stretch")
+    st.subheader("Network Out")
+    st.altair_chart(network_tx_chart, width="stretch")
 
 
 if __name__ == "__main__":

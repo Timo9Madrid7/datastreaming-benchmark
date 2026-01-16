@@ -14,10 +14,10 @@ class RunSpec:
 
 
 SCENARIO_DURATION_RE = re.compile(r"(?P<duration>\d+)s(?:$|[^0-9A-Za-z])")
-
+PATH = "logs"
 
 def infer_duration_seconds_from_logs(
-    scenario: str, logs_root: str | Path = "logs"
+    scenario: str, logs_root: str | Path = PATH
 ) -> int | None:
     """Only for sidebar labels in plots. Not for actual calculation."""
     scenario_dir = Path(logs_root) / scenario
@@ -42,7 +42,7 @@ def infer_duration_seconds_from_logs(
 
 
 def discover_scenarios(
-    logs_root: str | Path = "logs",
+    logs_root: str | Path = PATH,
 ) -> dict[str, dict[str, list[str]]]:
     root = Path(logs_root)
     if not root.exists():
@@ -76,12 +76,12 @@ def iter_run_specs(
 
 
 def get_run_dir(
-    scenario: str, tech: str, run: str, logs_root: str | Path = "logs"
+    scenario: str, tech: str, run: str, logs_root: str | Path = PATH
 ) -> Path:
     return Path(logs_root) / scenario / tech / run
 
 
-def get_cache_dir(scenario: str, logs_root: str | Path = "logs") -> Path:
+def get_cache_dir(scenario: str, logs_root: str | Path = PATH) -> Path:
     cache_dir = Path(logs_root) / scenario / ".cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
     return cache_dir
