@@ -12,16 +12,16 @@ size_t compute_serialized_size(const Payload &message) noexcept {
 	    + message.bytes.size();
 
 	if (message.kind == PayloadKind::COMPLEX) {
-		const size_t double_count = message.inner_payload.doubles.size();
+		const size_t double_count = message.nested_payload.doubles.size();
 		total += sizeof(size_t) + double_count * sizeof(double);
 
-		const size_t string_count = message.inner_payload.strings.size();
+		const size_t string_count = message.nested_payload.strings.size();
 		total += sizeof(size_t); // total_string_bytes
 		total += sizeof(size_t); // string_count
 		total += string_count * sizeof(uint16_t);
 
 		size_t string_bytes = 0;
-		for (const auto &str : message.inner_payload.strings) {
+		for (const auto &str : message.nested_payload.strings) {
 			string_bytes += str.size();
 		}
 		total += string_bytes;
@@ -59,31 +59,31 @@ Payload Payload::make(const std::string &publisher_id, int sequence_number,
 		break;
 
 	case PayloadKind::COMPLEX:
-		// Payload has a inner pattern
+		// Payload has a nested pattern
 		const size_t double_target_bytes = static_cast<size_t>(data_size * 0.6);
 		const size_t string_target_bytes = static_cast<size_t>(data_size * 0.2);
 
 		// Fill doubles
-		p.inner_payload.doubles.reserve(double_target_bytes / sizeof(double));
+		p.nested_payload.doubles.reserve(double_target_bytes / sizeof(double));
 		for (size_t i = 0; i < double_target_bytes / sizeof(double); ++i) {
-			p.inner_payload.doubles.push_back(static_cast<double>(i) * 1.111);
+			p.nested_payload.doubles.push_back(static_cast<double>(i) * 1.111);
 		}
 		const size_t actual_double_bytes =
-		    p.inner_payload.doubles.size() * sizeof(double);
+		    p.nested_payload.doubles.size() * sizeof(double);
 
 		// Fill strings (different lengths)
-		p.inner_payload.strings.reserve(string_target_bytes / 10);
+		p.nested_payload.strings.reserve(string_target_bytes / 10);
 		size_t cur_string_size = 0;
 		while (cur_string_size < string_target_bytes) {
 			std::string str = "str_" + std::to_string(cur_string_size);
-			p.inner_payload.strings.push_back(str);
+			p.nested_payload.strings.push_back(str);
 			cur_string_size += str.size();
 		}
 		if (cur_string_size > string_target_bytes
-		    && !p.inner_payload.strings.empty()) {
+		    && !p.nested_payload.strings.empty()) {
 			const size_t excess = cur_string_size - string_target_bytes;
-			p.inner_payload.strings.back().resize(
-			    p.inner_payload.strings.back().size() - excess);
+			p.nested_payload.strings.back().resize(
+			    p.nested_payload.strings.back().size() - excess);
 			cur_string_size -= excess;
 		}
 		const size_t actual_string_bytes = cur_string_size;
@@ -99,12 +99,12 @@ Payload Payload::make(const std::string &publisher_id, int sequence_number,
 		}
 		p.byte_size = p.bytes.size();
 
-		p.inner_payload.double_size = actual_double_bytes;
-		p.inner_payload.string_size = actual_string_bytes;
+		p.nested_payload.double_size = actual_double_bytes;
+		p.nested_payload.string_size = actual_string_bytes;
 		break;
 	}
 
-	p.data_size = p.inner_payload.double_size + p.inner_payload.string_size
+	p.data_size = p.nested_payload.double_size + p.nested_payload.string_size
 	              + p.byte_size;
 	p.serialized_bytes = compute_serialized_size(p);
 	return p;
@@ -190,34 +190,34 @@ bool Payload::serialize(const Payload &message, void *out) noexcept {
 	// Bytes
 	std::memcpy(ptr, message.bytes.data(), size);
 
-	// Inner payload for COMPLEX kind
+	// nested payload for COMPLEX kind
 	if (message.kind == PayloadKind::COMPLEX) {
 		ptr += size;
 
 		// Doubles count
-		const size_t double_count = message.inner_payload.doubles.size();
+		const size_t double_count = message.nested_payload.doubles.size();
 		std::memcpy(ptr, &double_count, sizeof(double_count));
 		ptr += sizeof(double_count);
 
 		// Doubles
-		std::memcpy(ptr, message.inner_payload.doubles.data(),
+		std::memcpy(ptr, message.nested_payload.doubles.data(),
 		            double_count * sizeof(double));
 		ptr += double_count * sizeof(double);
 
 		// Strings size
-		const size_t total_string_bytes = message.inner_payload.string_size;
+		const size_t total_string_bytes = message.nested_payload.string_size;
 		std::memcpy(ptr, &total_string_bytes, sizeof(total_string_bytes));
 		ptr += sizeof(total_string_bytes);
 
 		// Strings count
-		const size_t string_count = message.inner_payload.strings.size();
+		const size_t string_count = message.nested_payload.strings.size();
 		std::memcpy(ptr, &string_count, sizeof(string_count));
 		ptr += sizeof(string_count);
 
 		// Wire format: [len_0..len_n][bytes_0..bytes_n].
 		char *len_ptr = ptr;
 		char *data_ptr = ptr + string_count * sizeof(uint16_t);
-		for (const auto &str : message.inner_payload.strings) {
+		for (const auto &str : message.nested_payload.strings) {
 			const uint16_t str_len = static_cast<uint16_t>(str.size());
 			std::memcpy(len_ptr, &str_len, sizeof(str_len));
 			len_ptr += sizeof(str_len);
@@ -270,7 +270,7 @@ bool Payload::deserialize(const void *raw_message, size_t len,
 		std::memcpy(&double_count, data + offset, sizeof(double_count));
 		offset += sizeof(double_count);
 
-		auto &doubles = out.inner_payload.doubles;
+		auto &doubles = out.nested_payload.doubles;
 		if (doubles.capacity() < double_count) {
 			doubles.reserve(double_count);
 		}
@@ -288,7 +288,7 @@ bool Payload::deserialize(const void *raw_message, size_t len,
 		std::memcpy(&string_count, data + offset, sizeof(string_count));
 		offset += sizeof(string_count);
 
-		auto &strings = out.inner_payload.strings;
+		auto &strings = out.nested_payload.strings;
 		if (strings.capacity() < string_count) {
 			strings.reserve(string_count);
 		}
@@ -307,11 +307,11 @@ bool Payload::deserialize(const void *raw_message, size_t len,
 		}
 		offset = static_cast<size_t>(data_ptr - data);
 
-		out.inner_payload.double_size = double_count * sizeof(double);
-		out.inner_payload.string_size = total_string_bytes;
+		out.nested_payload.double_size = double_count * sizeof(double);
+		out.nested_payload.string_size = total_string_bytes;
 	}
 
-	out.data_size = out.inner_payload.double_size + out.inner_payload.string_size
+	out.data_size = out.nested_payload.double_size + out.nested_payload.string_size
 	              + out.byte_size;
 
 	out.serialized_bytes = compute_serialized_size(out);

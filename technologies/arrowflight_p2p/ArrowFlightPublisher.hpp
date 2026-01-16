@@ -6,6 +6,7 @@
 #include <arrow/flight/types.h>
 #include <arrow/record_batch.h>
 #include <arrow/status.h>
+#include <arrow/type.h>
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
@@ -37,6 +38,7 @@ class ArrowFlightPublisher : public IPublisher {
 
   private:
 	const static std::shared_ptr<arrow::Schema> schema_;
+	const static std::shared_ptr<arrow::Schema> schema_nested_;
 
 	struct BatchBuilder {
 		arrow::StringBuilder message_id_builder;

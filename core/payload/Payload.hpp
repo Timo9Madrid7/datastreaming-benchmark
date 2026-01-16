@@ -10,7 +10,7 @@ enum class PayloadKind { TERMINATION = 0, FLAT, COMPLEX };
 const std::string TERMINATION_SIGNAL = "__END__";
 
 struct Payload {
-	struct InnerPayload {
+	struct NestedPayload {
 		size_t double_size = 0;
 		size_t string_size = 0;
 		std::vector<double> doubles;
@@ -23,7 +23,7 @@ struct Payload {
 	size_t byte_size = 0;
 	std::vector<uint8_t> bytes;
 
-	InnerPayload inner_payload;
+	NestedPayload nested_payload;
 
 	size_t data_size = 0;
 	size_t serialized_bytes = 0;

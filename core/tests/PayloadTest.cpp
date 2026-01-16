@@ -24,12 +24,12 @@ static void roundtrip(const Payload &input) {
 	assert(output.bytes == input.bytes);
 
 	if (input.kind == PayloadKind::COMPLEX) {
-		assert(output.inner_payload.doubles == input.inner_payload.doubles);
-		assert(output.inner_payload.strings == input.inner_payload.strings);
-		assert(output.inner_payload.double_size
-		       == input.inner_payload.double_size);
-		assert(output.inner_payload.string_size
-		       == input.inner_payload.string_size);
+		assert(output.nested_payload.doubles == input.nested_payload.doubles);
+		assert(output.nested_payload.strings == input.nested_payload.strings);
+		assert(output.nested_payload.double_size
+		       == input.nested_payload.double_size);
+		assert(output.nested_payload.string_size
+		       == input.nested_payload.string_size);
 	}
 }
 
