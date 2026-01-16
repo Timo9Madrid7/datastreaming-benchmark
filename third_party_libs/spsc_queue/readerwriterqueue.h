@@ -753,7 +753,7 @@ private:
 #endif
 };
 
-// Like ReaderWriterQueue, but also providees blocking operations
+// Like ReaderWriterQueue, but also provides blocking operations
 template<typename T, size_t MAX_BLOCK_SIZE = 512>
 class BlockingReaderWriterQueue
 {
