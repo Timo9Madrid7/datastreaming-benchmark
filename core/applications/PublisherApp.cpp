@@ -163,12 +163,12 @@ void PublisherApp::create_publisher() {
 void PublisherApp::publish_on_topic(std::string topic, Payload message) {
 	const Payload &base = pick_random_payload();
 	// Throttle by payload bytes (serialization overhead is small vs payload).
-	rate_limiter.acquire(base.data_size);
+	rate_limiter.acquire(base.serialized_bytes);
 	logger->log_info("[PublisherApp] Publishing," + message.message_id + ","
-	                 + std::to_string(base.data_size) + "," + topic);
+	                 + std::to_string(base.serialized_bytes) + "," + topic);
 	publisher->send_message(message, topic); // technology-specific send
 	logger->log_info("[PublisherApp] Published," + message.message_id + ","
-	                 + std::to_string(base.data_size) + "," + topic);
+	                 + std::to_string(base.serialized_bytes) + "," + topic);
 }
 
 void PublisherApp::publish_on_all_topics(Payload message) {

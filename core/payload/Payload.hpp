@@ -19,9 +19,13 @@ struct Payload {
 
 	std::string message_id;
 	PayloadKind kind;
-	size_t data_size;
-	std::vector<uint8_t> data;
+
+	size_t byte_size = 0;
+	std::vector<uint8_t> bytes;
+
 	InnerPayload inner_payload;
+
+	size_t data_size = 0;
 	size_t serialized_bytes = 0;
 
 	/**

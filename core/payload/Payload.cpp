@@ -9,7 +9,7 @@ namespace {
 size_t compute_serialized_size(const Payload &message) noexcept {
 	const size_t id_len = message.message_id.size();
 	size_t total = sizeof(uint16_t) + id_len + sizeof(uint8_t) + sizeof(size_t)
-	    + message.data.size();
+	    + message.bytes.size();
 
 	if (message.kind == PayloadKind::COMPLEX) {
 		const size_t double_count = message.inner_payload.doubles.size();
@@ -42,17 +42,20 @@ Payload Payload::make(const std::string &publisher_id, int sequence_number,
 	case PayloadKind::TERMINATION:
 		p.message_id = publisher_id + ":" + TERMINATION_SIGNAL;
 		// Termination signal
-		p.data = {0xFF};
-		p.data_size = 1;
+		p.bytes = {0xFF};
+		p.byte_size = 1;
+		p.data_size = p.byte_size;
 		p.serialized_bytes = compute_serialized_size(p);
 		return p;
 
 	case PayloadKind::FLAT:
 		// Fill with random pattern
-		p.data.reserve(data_size);
+		p.bytes.reserve(data_size);
 		for (size_t i = 0; i < data_size; ++i) {
-			p.data.push_back(static_cast<uint8_t>((i * sequence_number) % 251));
+			p.bytes.push_back(
+			    static_cast<uint8_t>((i * sequence_number) % 251));
 		}
+		p.byte_size = p.bytes.size();
 		break;
 
 	case PayloadKind::COMPLEX:
@@ -85,21 +88,24 @@ Payload Payload::make(const std::string &publisher_id, int sequence_number,
 		}
 		const size_t actual_string_bytes = cur_string_size;
 
-		const size_t raw_data_size =
+		const size_t byte_size =
 		    data_size - actual_double_bytes - actual_string_bytes;
 
 		// Fill raw data
-		p.data.reserve(raw_data_size);
-		for (size_t i = 0; i < raw_data_size; ++i) {
-			p.data.push_back(static_cast<uint8_t>((i + sequence_number) % 199));
+		p.bytes.reserve(byte_size);
+		for (size_t i = 0; i < byte_size; ++i) {
+			p.bytes.push_back(
+			    static_cast<uint8_t>((i + sequence_number) % 199));
 		}
+		p.byte_size = p.bytes.size();
 
 		p.inner_payload.double_size = actual_double_bytes;
 		p.inner_payload.string_size = actual_string_bytes;
 		break;
 	}
 
-	p.data_size = p.data.size();
+	p.data_size = p.inner_payload.double_size + p.inner_payload.string_size
+	              + p.byte_size;
 	p.serialized_bytes = compute_serialized_size(p);
 	return p;
 }
@@ -177,12 +183,12 @@ bool Payload::serialize(const Payload &message, void *out) noexcept {
 	ptr += sizeof(kind);
 
 	// Data size
-	const size_t size = static_cast<size_t>(message.data_size);
+	const size_t size = static_cast<size_t>(message.byte_size);
 	std::memcpy(ptr, &size, sizeof(size));
 	ptr += sizeof(size);
 
-	// Data
-	std::memcpy(ptr, message.data.data(), size);
+	// Bytes
+	std::memcpy(ptr, message.bytes.data(), size);
 
 	// Inner payload for COMPLEX kind
 	if (message.kind == PayloadKind::COMPLEX) {
@@ -242,23 +248,23 @@ bool Payload::deserialize(const void *raw_message, size_t len,
 	offset += sizeof(kind_byte);
 	PayloadKind kind_payload = static_cast<PayloadKind>(kind_byte);
 
-	size_t data_size = 0;
-	std::memcpy(&data_size, data + offset, sizeof(data_size));
-	offset += sizeof(data_size);
+	size_t byte_size = 0;
+	std::memcpy(&byte_size, data + offset, sizeof(byte_size));
+	offset += sizeof(byte_size);
 
 	out.kind = kind_payload;
-	out.data_size = data_size;
+	out.byte_size = byte_size;
 
-	if (out.data.capacity() < data_size) {
-		out.data.reserve(data_size);
+	if (out.bytes.capacity() < byte_size) {
+		out.bytes.reserve(byte_size);
 	}
-	out.data.resize(data_size);
-	if (data_size > 0) {
-		std::memcpy(out.data.data(), data + offset, data_size);
+	out.bytes.resize(byte_size);
+	if (byte_size > 0) {
+		std::memcpy(out.bytes.data(), data + offset, byte_size);
 	}
 
 	if (out.kind == PayloadKind::COMPLEX) {
-		offset += data_size;
+		offset += byte_size;
 
 		size_t double_count = 0;
 		std::memcpy(&double_count, data + offset, sizeof(double_count));
@@ -304,6 +310,9 @@ bool Payload::deserialize(const void *raw_message, size_t len,
 		out.inner_payload.double_size = double_count * sizeof(double);
 		out.inner_payload.string_size = total_string_bytes;
 	}
+
+	out.data_size = out.inner_payload.double_size + out.inner_payload.string_size
+	              + out.byte_size;
 
 	out.serialized_bytes = compute_serialized_size(out);
 

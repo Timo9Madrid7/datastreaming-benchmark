@@ -20,7 +20,8 @@ static void roundtrip(const Payload &input) {
 	assert(output.message_id == input.message_id);
 	assert(output.kind == input.kind);
 	assert(output.data_size == input.data_size);
-	assert(output.data == input.data);
+	assert(output.byte_size == input.byte_size);
+	assert(output.bytes == input.bytes);
 
 	if (input.kind == PayloadKind::COMPLEX) {
 		assert(output.inner_payload.doubles == input.inner_payload.doubles);
@@ -50,8 +51,9 @@ int main() {
 		auto p = Payload::make("pub", 3, 0, PayloadKind::TERMINATION);
 		roundtrip(p);
 		assert(p.data_size == 1);
-		assert(p.data.size() == 1);
-		assert(p.data[0] == 0xFF);
+		assert(p.byte_size == 1);
+		assert(p.bytes.size() == 1);
+		assert(p.bytes[0] == 0xFF);
 	}
 
 	std::cout << "PayloadTest passed\n";
