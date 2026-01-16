@@ -69,18 +69,13 @@ void ZeroMQP2PPublisher::initialize() {
 
 void ZeroMQP2PPublisher::send_message(const Payload &message,
                                       std::string &topic) {
-	size_t total_size = 0;
+	const size_t serialized_size =
+	    sizeof(uint8_t) + topic.size() + message.serialized_bytes;
+
 	try {
 		logger->log_study("Serializing," + message.message_id + "," + topic);
 
-		total_size = sizeof(uint8_t) // Topic Length
-		    + topic.size()                  // Topic
-		    + sizeof(uint16_t)              // Message ID Length
-		    + message.message_id.size()     // Message ID
-		    + sizeof(uint8_t)               // Kind
-		    + sizeof(size_t)                // Data size
-		    + message.data_size;            // Data
-		std::string serialized(total_size, '\0');
+		std::string serialized(serialized_size, '\0');
 		serialize(message, topic, serialized.data());
 
 		logger->log_debug(
@@ -91,13 +86,12 @@ void ZeroMQP2PPublisher::send_message(const Payload &message,
 		publisher.send(zmq_message, zmq::send_flags::none);
 		logger->log_study("Publication," + message.message_id + "," + topic
 		                  + "," + std::to_string(message.data_size) + ","
-		                  + std::to_string(total_size));
+		                  + std::to_string(serialized_size));
 		logger->log_debug(
 		    "[ZeroMQP2P Publisher] Socket connected clients: "
 		    + std::to_string(publisher.get(zmq::sockopt::events)));
 
 	} catch (const zmq::error_t &e) {
-		const auto serialized_size = total_size > 0 ? total_size : static_cast<size_t>(-1);
 		logger->log_study("DeliveryError," + message.message_id + "," + topic
 		                  + "," + std::to_string(message.data_size) + ","
 		                  + std::to_string(serialized_size));

@@ -37,6 +37,7 @@ class MetricsCollector:
             "cpu_usage_ns",
             "cpu_usage_perc",
             "memory_usage",
+            "page_cache",
             "network_rx",
             "network_tx",
             "disk_read",
@@ -157,7 +158,17 @@ class MetricsCollector:
                     system_cpu_usage: float = cpu_stats.get("system_cpu_usage", 0)
 
                     memory_stats = stats.get("memory_stats") or {}
-                    memory_usage: float = memory_stats.get("usage", 0)
+                    memory_usage_total: float = memory_stats.get("usage", 0)
+                    memory_details: dict = memory_stats.get("stats") or {}
+                    file_cache = memory_details.get("file")
+                    page_cache: float = (
+                        file_cache
+                        if file_cache is not None
+                        else memory_details.get("active_file", 0)
+                        + memory_details.get("inactive_file", 0)
+                    )
+                    # Report memory usage excluding page cache.
+                    memory_usage: float = max(memory_usage_total - page_cache, 0)
 
                     networks: dict = stats.get("networks") or {}
                     network_rx: float = sum(
@@ -174,12 +185,12 @@ class MetricsCollector:
                     disk_read: float = sum(
                         x.get("value", 0)
                         for x in io_service_bytes
-                        if x.get("op") == "Read"
+                        if x.get("op") == "read"
                     )
                     disk_write: float = sum(
                         x.get("value", 0)
                         for x in io_service_bytes
-                        if x.get("op") == "Write"
+                        if x.get("op") == "write"
                     )
 
                     # Calculate CPU percentage
@@ -196,6 +207,7 @@ class MetricsCollector:
                             "cpu_usage_ns": cpu_usage_ns,
                             "cpu_usage_perc": cpu_usage_perc,
                             "memory_usage": memory_usage,
+                            "page_cache": page_cache,
                             "network_rx": network_rx,
                             "network_tx": network_tx,
                             "disk_read": disk_read,
@@ -214,7 +226,7 @@ class MetricsCollector:
                     continue
 
                 logger.debug(
-                    f"Metrics for {container.name}: CPU {cpu_usage_perc}%, Memory {memory_usage} bytes, Network RX {network_rx} bytes, Network TX {network_tx} bytes, Disk Read {disk_read} bytes, Disk Write {disk_write} bytes"
+                    f"Metrics for {container.name}: CPU {cpu_usage_perc}%, Memory {memory_usage} bytes, PageCache {page_cache} bytes, Network RX {network_rx} bytes, Network TX {network_tx} bytes, Disk Read {disk_read} bytes, Disk Write {disk_write} bytes"
                 )
                 time.sleep(self.interval)
                 nlogs += 1
@@ -227,7 +239,8 @@ class MetricsCollector:
                 f"Stopping metrics collection for technology '{self.tech_name}'..."
             )
             self.running = False
-        self.thread.join()
+        if self.thread is not None:
+            self.thread.join()
         logger.info(
             f"Metrics collection thread for technology '{self.tech_name}' has stopped."
         )

@@ -37,8 +37,8 @@ void KafkaDeliveryReportCb::dr_cb(RdKafka::Message &message) {
 
 	if (message.err()) {
 		logger_->log_study("DeliveryError," + key_str + ","
-		                   + message.topic_name() + ","
-		                   + std::to_string(message.len()) + ",-1,");
+		                   + message.topic_name() + ",-1,"
+		                   + std::to_string(message.len()));
 	} else {
 		logger_->log_study("Publication," + key_str + "," + message.topic_name()
 		                   + ",-1," // No payload size available here

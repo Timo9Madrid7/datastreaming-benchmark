@@ -1,6 +1,5 @@
 #include "NatsPublisher.hpp"
 
-#include <cstdint>
 #include <cstring>
 #include <nats/status.h>
 #include <stdexcept>
@@ -56,8 +55,7 @@ void NatsPublisher::initialize() {
 void NatsPublisher::send_message(const Payload &message, std::string &subject) {
 	logger->log_study("Serializing," + message.message_id + "," + subject);
 
-	const size_t serialized_size = sizeof(uint16_t) + message.message_id.size()
-	    + sizeof(uint8_t) + sizeof(size_t) + message.data_size;
+	const size_t serialized_size = message.serialized_bytes;
 	std::string serialized(serialized_size, '\0');
 	if (!Payload::serialize(message, serialized.data())) {
 		logger->log_error(

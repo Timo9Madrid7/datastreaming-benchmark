@@ -1,6 +1,7 @@
 #include "ArrowFlightConsumer.hpp"
 
 #include <arrow/array/array_binary.h>
+#include <arrow/array/array_nested.h>
 #include <arrow/array/array_primitive.h>
 #include <arrow/flight/types.h>
 #include <arrow/record_batch.h>
@@ -189,16 +190,64 @@ void ArrowFlightConsumer::consume_from_publisher_(const std::string &endpoint,
 		auto data_column =
 		    std::static_pointer_cast<arrow::BinaryArray>(batch->column(2));
 
+		std::shared_ptr<arrow::StructArray> nested_column;
+		std::shared_ptr<arrow::ListArray> nested_doubles;
+		std::shared_ptr<arrow::ListArray> nested_strings;
+		std::shared_ptr<arrow::DoubleArray> nested_doubles_values;
+		std::shared_ptr<arrow::StringArray> nested_strings_values;
+		if (batch->num_columns() >= 4) { // kind=COMPLEX has nested payload
+			nested_column =
+			    std::static_pointer_cast<arrow::StructArray>(batch->column(3));
+			if (nested_column && nested_column->num_fields() >= 2) {
+				nested_doubles = std::static_pointer_cast<arrow::ListArray>(
+				    nested_column->field(0));
+				nested_strings = std::static_pointer_cast<arrow::ListArray>(
+				    nested_column->field(1));
+				if (nested_doubles) {
+					nested_doubles_values =
+					    std::static_pointer_cast<arrow::DoubleArray>(
+					        nested_doubles->values());
+				}
+				if (nested_strings) {
+					nested_strings_values =
+					    std::static_pointer_cast<arrow::StringArray>(
+					        nested_strings->values());
+				}
+			}
+		}
+
 		for (int64_t i = 0; i < batch->num_rows(); ++i) {
 			std::string message_id = message_id_column->GetString(i);
 			PayloadKind kind = static_cast<PayloadKind>(kind_column->Value(i));
-			(void)kind;
 
 			std::string_view data_view = data_column->GetView(i);
-			size_t data_size = data_view.size();
+			size_t nested_double_bytes = 0;
+			size_t nested_string_bytes = 0;
+			if (kind == PayloadKind::COMPLEX && nested_column
+			    && !nested_column->IsNull(i)) {
+				if (nested_doubles && nested_doubles_values
+				    && !nested_doubles->IsNull(i)) {
+					const int64_t len = nested_doubles->value_length(i);
+					nested_double_bytes =
+					    static_cast<size_t>(len) * sizeof(double);
+				}
+				if (nested_strings && nested_strings_values
+				    && !nested_strings->IsNull(i)) {
+					const int64_t off = nested_strings->value_offset(i);
+					const int64_t len = nested_strings->value_length(i);
+					for (int64_t j = 0; j < len; ++j) {
+						nested_string_bytes += static_cast<size_t>(
+						    nested_strings_values->value_length(off + j));
+					}
+				}
+			}
+
+			size_t data_size = static_cast<size_t>(data_view.size())
+			    + nested_double_bytes + nested_string_bytes;
 
 			size_t row_size = message_id_column->value_length(i)
-			    + sizeof(uint8_t) + data_column->value_length(i);
+			    + sizeof(uint8_t) + data_column->value_length(i)
+			    + nested_double_bytes + nested_string_bytes;
 
 			logger->log_study("Reception," + message_id + "," + ticket + ","
 			                  + std::to_string(data_size) + ","

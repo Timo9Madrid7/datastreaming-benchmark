@@ -1,7 +1,6 @@
 #include "KafkaCppPublisher.hpp"
 
 #include <cstddef>
-#include <cstdint>
 #include <cstring>
 #include <librdkafka/rdkafkacpp.h>
 #include <list>
@@ -102,11 +101,7 @@ void KafkaCppPublisher::send_message(const Payload &message,
                                      std::string &topic) {
 	logger->log_study("Serializing," + message.message_id + "," + topic);
 
-	size_t serialized_size = sizeof(uint16_t) // Message ID Length
-	    + message.message_id.size()           // Message ID
-	    + sizeof(uint8_t)                     // Kind
-	    + sizeof(size_t)                      // Data size
-	    + message.data_size;                  // Data
+	size_t serialized_size = message.serialized_bytes;
 	std::string serialized(serialized_size, '\0');
 	if (!Payload::serialize(message, serialized.data())) {
 		logger->log_error(
