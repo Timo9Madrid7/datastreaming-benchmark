@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Iterable
 
 import polars as pl
-from analysis.data_loader import get_cache_dir, get_run_dir
+from analysis.data_loader import get_cache_dir, get_run_dir, PATH
 
 EVENT_TIMESTAMP_FMT = "%Y-%m-%d %H:%M:%S%.f"
 RESOURCE_TIMESTAMP_FMT = "%Y-%m-%dT%H:%M:%S%.f"
@@ -89,21 +89,44 @@ def _load_resource_metrics(run_dir: Path) -> pl.DataFrame:
         # indicate different containers
         source = csv_file.stem.rsplit(
             "-", 1)[-1] if "broker" not in csv_file.stem else "Broker"
-        frames.append(
-            pl.read_csv(csv_file).with_columns(
-                pl.lit(source).alias("source"),
-                pl.coalesce(
-                    [
-                        pl.col("timestamp").cast(pl.Datetime, strict=False),
-                        pl.col("timestamp")
-                        .cast(pl.Utf8)
-                        .str.strptime(
-                            pl.Datetime, format=RESOURCE_TIMESTAMP_FMT, strict=False
-                        ),
-                    ]
-                ).alias("timestamp"),
-            )
+        df = pl.read_csv(csv_file)
+
+        # Keep backwards compatibility with older metric CSVs.
+        numeric_cols = [
+            "cpu_usage_ns",
+            "cpu_usage_perc",
+            "memory_usage",
+            "page_cache",
+            "network_rx",
+            "network_tx",
+            "disk_read",
+            "disk_write",
+        ]
+        for col in numeric_cols:
+            if col not in df.columns:
+                df = df.with_columns(pl.lit(0).alias(col))
+
+        df = df.with_columns(
+            pl.lit(source).alias("source"),
+            pl.coalesce(
+                [
+                    pl.col("timestamp").cast(pl.Datetime, strict=False),
+                    pl.col("timestamp")
+                    .cast(pl.Utf8)
+                    .str.strptime(
+                        pl.Datetime, format=RESOURCE_TIMESTAMP_FMT, strict=False
+                    ),
+                ]
+            ).alias("timestamp"),
+            *[
+                pl.col(col)
+                .cast(pl.Float64, strict=False)
+                .fill_null(0)
+                .alias(col)
+                for col in numeric_cols
+            ],
         )
+        frames.append(df)
     return pl.concat(frames, how="vertical")
 
 
@@ -113,7 +136,7 @@ def throughput_for_run(
     run: str,
     window_s: int,
     event_type: str = "Publication",
-    logs_root: str | Path = "logs",
+    logs_root: str | Path = PATH,
 ) -> pl.DataFrame:
     cache_dir = get_cache_dir(scenario, logs_root)
     event_label = event_type.lower()
@@ -224,7 +247,7 @@ def latency_stats_for_run(
     scenario: str,
     tech: str,
     run: str,
-    logs_root: str | Path = "logs",
+    logs_root: str | Path = PATH,
 ) -> pl.DataFrame:
     cache_dir = get_cache_dir(scenario, logs_root)
     cache_path = cache_dir / f"latency_segments_{tech}_{run}.parquet"
@@ -327,7 +350,7 @@ def latency_samples_for_run(
     scenario: str,
     tech: str,
     run: str,
-    logs_root: str | Path = "logs",
+    logs_root: str | Path = PATH,
 ) -> pl.DataFrame:
     """Return per-message latency samples with a time axis for offset filtering.
 
@@ -435,12 +458,23 @@ def resource_usage_for_run(
     scenario: str,
     tech: str,
     run: str,
-    logs_root: str | Path = "logs",
+    logs_root: str | Path = PATH,
 ) -> pl.DataFrame:
     cache_dir = get_cache_dir(scenario, logs_root)
     cache_path = cache_dir / f"resources_{tech}_{run}.parquet"
     if cache_path.exists():
-        return pl.read_parquet(cache_path)
+        cached = pl.read_parquet(cache_path)
+        expected = {
+            "time_s",
+            "cpu_usage_perc",
+            "memory_mb",
+            "page_cache_mb",
+            "disk_throughput_mb_s",
+            "network_rx_mb_s",
+            "network_tx_mb_s",
+        }
+        if not cached.is_empty() and expected.issubset(set(cached.columns)):
+            return cached
     run_dir = get_run_dir(scenario, tech, run, logs_root)
     metrics = _load_resource_metrics(run_dir)
     if metrics.is_empty():
@@ -451,6 +485,8 @@ def resource_usage_for_run(
     metrics = metrics.sort(["source", "timestamp"]).with_columns(
         pl.col("disk_read").diff().over("source").alias("disk_read_delta"),
         pl.col("disk_write").diff().over("source").alias("disk_write_delta"),
+        pl.col("network_rx").diff().over("source").alias("network_rx_delta"),
+        pl.col("network_tx").diff().over("source").alias("network_tx_delta"),
         (pl.col("timestamp").dt.epoch("ms").diff().over("source") / 1000).alias(
             "time_delta_s"
         ),
@@ -470,6 +506,29 @@ def resource_usage_for_run(
         .then(0)
         .otherwise(disk_throughput_mb_s)
         .alias("disk_throughput_mb_s")
+    )
+
+    network_rx_mb_s = (
+        pl.when(pl.col("time_delta_s") > 0)
+        .then(pl.col("network_rx_delta") / pl.col("time_delta_s") / 1_000_000)
+        .otherwise(0)
+        .fill_null(0)
+    )
+    network_tx_mb_s = (
+        pl.when(pl.col("time_delta_s") > 0)
+        .then(pl.col("network_tx_delta") / pl.col("time_delta_s") / 1_000_000)
+        .otherwise(0)
+        .fill_null(0)
+    )
+    metrics = metrics.with_columns(
+        pl.when(network_rx_mb_s < 0)
+        .then(0)
+        .otherwise(network_rx_mb_s)
+        .alias("network_rx_mb_s"),
+        pl.when(network_tx_mb_s < 0)
+        .then(0)
+        .otherwise(network_tx_mb_s)
+        .alias("network_tx_mb_s"),
     )
     metrics = metrics.with_columns(
         pl.cum_count("source").over("source").alias("row_index")
@@ -492,7 +551,10 @@ def resource_usage_for_run(
             ).alias("timestamp"),
             pl.col("cpu_usage_perc").sum().alias("cpu_usage_perc"),
             pl.col("memory_usage").sum().alias("memory_usage"),
+            pl.col("page_cache").sum().alias("page_cache"),
             pl.col("disk_throughput_mb_s").sum().alias("disk_throughput_mb_s"),
+            pl.col("network_rx_mb_s").sum().alias("network_rx_mb_s"),
+            pl.col("network_tx_mb_s").sum().alias("network_tx_mb_s"),
         )
         .sort("timestamp")
     )
@@ -509,7 +571,18 @@ def resource_usage_for_run(
         .cast(pl.Int64)
         .alias("time_s"),
         (pl.col("memory_usage") / 1024 / 1024).alias("memory_mb"),
-    ).select(["time_s", "cpu_usage_perc", "memory_mb", "disk_throughput_mb_s"])
+        (pl.col("page_cache") / 1024 / 1024).alias("page_cache_mb"),
+    ).select(
+        [
+            "time_s",
+            "cpu_usage_perc",
+            "memory_mb",
+            "page_cache_mb",
+            "disk_throughput_mb_s",
+            "network_rx_mb_s",
+            "network_tx_mb_s",
+        ]
+    )
     aggregated.write_parquet(cache_path)
     return aggregated
 
