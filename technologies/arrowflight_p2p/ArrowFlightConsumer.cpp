@@ -227,11 +227,9 @@ void ArrowFlightConsumer::consume_from_publisher_(const std::string &endpoint,
 			    && !nested_column->IsNull(i)) {
 				if (nested_doubles && nested_doubles_values
 				    && !nested_doubles->IsNull(i)) {
-					const int64_t off = nested_doubles->value_offset(i);
 					const int64_t len = nested_doubles->value_length(i);
 					nested_double_bytes =
 					    static_cast<size_t>(len) * sizeof(double);
-					(void)off;
 				}
 				if (nested_strings && nested_strings_values
 				    && !nested_strings->IsNull(i)) {
