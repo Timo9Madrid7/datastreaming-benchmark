@@ -16,9 +16,7 @@ class ZeroMQP2PPublisher : public IPublisher {
 	std::string endpoint;
 
   private:
-	bool serialize(const Payload &message, void *out) override;
 	bool serialize(const Payload &message, std::string topic, void *out);
-
 	void log_configuration() override;
 
   public:

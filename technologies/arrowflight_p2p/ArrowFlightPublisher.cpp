@@ -20,7 +20,12 @@ const std::shared_ptr<arrow::Schema> ArrowFlightPublisher::schema_ =
     arrow::schema({
         arrow::field("message_id", arrow::utf8()),
         arrow::field("kind", arrow::uint8()),
-        arrow::field("data", arrow::binary()),
+        arrow::field("bytes", arrow::binary()),
+        arrow::field("nested",
+                     arrow::struct_({
+                         arrow::field("doubles", arrow::list(arrow::float64())),
+                         arrow::field("strings", arrow::list(arrow::utf8())),
+                     })),
     });
 
 ArrowFlightPublisher::ArrowFlightPublisher(std::shared_ptr<Logger> logger) try
@@ -182,19 +187,67 @@ bool ArrowFlightPublisher::serialize(const Payload &message, void *out) {
 	if (!st.ok())
 		return false;
 
-	st = builder->data_builder.Append(message.data.data(),
-	                                  static_cast<size_t>(message.data_size));
+	st = builder->data_builder.Append(message.bytes.data(),
+	                                  static_cast<size_t>(message.byte_size));
 	if (!st.ok())
 		return false;
 
+	if (!builder->nested_builder) {
+		return false;
+	}
+
+	// nested payload (only for COMPLEX)
+	if (message.kind == PayloadKind::COMPLEX) {
+		st = builder->nested_builder->Append();
+		if (!st.ok())
+			return false;
+
+		auto *doubles_list = static_cast<arrow::ListBuilder *>(
+		    builder->nested_builder->field_builder(0));
+		auto *strings_list = static_cast<arrow::ListBuilder *>(
+		    builder->nested_builder->field_builder(1));
+		auto *doubles_values =
+		    static_cast<arrow::DoubleBuilder *>(doubles_list->value_builder());
+		auto *strings_values =
+		    static_cast<arrow::StringBuilder *>(strings_list->value_builder());
+
+		st = doubles_list->Append();
+		if (!st.ok())
+			return false;
+		for (const auto &d : message.nested_payload.doubles) {
+			st = doubles_values->Append(d);
+			if (!st.ok())
+				return false;
+		}
+
+		st = strings_list->Append();
+		if (!st.ok())
+			return false;
+		for (const auto &s : message.nested_payload.strings) {
+			st = strings_values->Append(s);
+			if (!st.ok())
+				return false;
+		}
+	} else {
+		st = builder->nested_builder->AppendNull();
+		if (!st.ok())
+			return false;
+	}
+
 	builder->rows += 1;
 	builder->byte_size +=
-	    message.message_id.size() + sizeof(uint8_t) + message.data_size;
+	    message.message_id.size() + sizeof(uint8_t) + message.byte_size;
+	if (message.kind == PayloadKind::COMPLEX) {
+		builder->byte_size += message.nested_payload.double_size;
+		builder->byte_size += message.nested_payload.string_size;
+	}
 	return true;
 }
 
 void ArrowFlightPublisher::send_message(const Payload &message,
                                         std::string &ticket) {
+	logger->log_study("Serializing," + message.message_id + "," + ticket);
+
 	BatchBuilder &bb = ticket_batch_builders_[ticket];
 
 	if (!serialize(message, &bb)) {
@@ -204,11 +257,16 @@ void ArrowFlightPublisher::send_message(const Payload &message,
 		return;
 	}
 
+	const size_t row_size = message.message_id.size() + sizeof(uint8_t)
+	    + message.byte_size
+	    + (message.kind == PayloadKind::COMPLEX
+	           ? message.nested_payload.double_size
+	               + message.nested_payload.string_size
+	           : 0);
+
 	bb.publication_logs.push_back(
-	    "Publication," + message.message_id + ","
-	    + std::to_string(message.data_size) + "," + ticket + ","
-	    + std::to_string(message.message_id.size() + sizeof(uint8_t)
-	                     + message.data_size));
+	    "Publication," + message.message_id + "," + ticket + ","
+	    + std::to_string(message.data_size) + "," + std::to_string(row_size));
 
 	const bool flush = (bb.byte_size >= MAX_BATCH_BYTES)
 	    || (message.kind == PayloadKind::TERMINATION);
@@ -228,7 +286,7 @@ void ArrowFlightPublisher::send_message(const Payload &message,
 	for (const auto &log_entry : bb.publication_logs) {
 		logger->log_study(log_entry);
 	}
-	
+
 	bb.reset();
 }
 

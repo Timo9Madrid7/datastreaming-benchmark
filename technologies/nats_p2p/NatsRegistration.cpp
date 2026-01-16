@@ -1,8 +1,12 @@
-#include "./NatsConsumer.hpp"
-#include "./NatsPublisher.hpp"
-#include "Factory.hpp"
-#include "IConsumer.hpp"
-#include "IPublisher.hpp"
+#include <memory> // for shared_ptr, unique_ptr, make_unique
+
+#include "./NatsConsumer.hpp"  // for NatsConsumer
+#include "./NatsPublisher.hpp" // for NatsPublisher
+#include "Factory.hpp"         // for Factory
+#include "Logger.hpp"          // for Logger
+
+class IConsumer;
+class IPublisher;
 
 extern "C" void register_technology(std::shared_ptr<Logger> logger) {
 	Factory<IPublisher>::registerClient(

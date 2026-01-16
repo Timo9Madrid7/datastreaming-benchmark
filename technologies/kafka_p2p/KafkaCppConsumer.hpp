@@ -4,8 +4,9 @@
 #include <memory>
 #include <vector>
 
+#include "Deserializer.hpp"
 #include "IConsumer.hpp"
-#include "Payload.hpp"
+
 
 class KafkaCppConsumer : public IConsumer {
   public:
@@ -15,9 +16,6 @@ class KafkaCppConsumer : public IConsumer {
 	void initialize() override;
 	void subscribe(const std::string &topic) override;
 	void start_loop() override;
-	bool deserialize(const void *raw_message, size_t len,
-	                 Payload &out) override;
-	bool deserialize_id(const void *raw_message, size_t len, Payload &out);
 	void log_configuration() override;
 
   private:
@@ -26,4 +24,7 @@ class KafkaCppConsumer : public IConsumer {
 
 	std::unique_ptr<RdKafka::KafkaConsumer> consumer_;
 	std::unique_ptr<RdKafka::Conf> conf_;
+
+	utils::Deserializer deserializer_;
+	std::atomic<bool> stop_receiving_{false};
 };

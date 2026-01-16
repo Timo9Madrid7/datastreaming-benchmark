@@ -1,6 +1,8 @@
 #include "ZeroMQP2PConsumer.hpp"
 
 #include <cstdlib>
+#include <cstring>
+#include <memory>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -8,87 +10,55 @@
 #include <sys/types.h>
 #include <unordered_set>
 #include <utility>
-#include <vector>
+#include <zmq.h>
 #include <zmq.hpp>
 
 #include "Payload.hpp"
 #include "Utils.hpp"
 
 bool ZeroMQP2PConsumer::deserialize(const void *raw_message, size_t len,
-                                    Payload &out) {
+                                    std::string &topic, Payload &out) {
 	const char *data = static_cast<const char *>(raw_message);
 	size_t offset = 0;
 
-	// Topic length & Topic and skip over it
+	// Topic length & Topic
 	uint8_t topic_len;
 	std::memcpy(&topic_len, data + offset, sizeof(uint8_t));
 	offset += sizeof(uint8_t);
+	topic.assign(data + offset, topic_len);
 	offset += topic_len;
 
-	// Message ID length
-	uint16_t id_len;
-	std::memcpy(&id_len, data + offset, sizeof(uint16_t));
-	offset += sizeof(uint16_t);
-
-	// Message ID
-	std::string message_id(data + offset, id_len);
-	offset += id_len;
-
-	// Kind
-	uint8_t kind_byte;
-	std::memcpy(&kind_byte, data + offset, sizeof(uint8_t));
-	offset += sizeof(uint8_t);
-	PayloadKind kind_payload = static_cast<PayloadKind>(kind_byte);
-
-	// Data size
-	size_t data_size;
-	std::memcpy(&data_size, data + offset, sizeof(size_t));
-	offset += sizeof(size_t);
-
-	if (len != offset + data_size) {
-		logger->log_error(
-		    "[ZeroMQP2P Consumer] Invalid message: size mismatch");
+	if (Payload::deserialize(data + offset, len - offset, out) == false) {
+		logger->log_error("[ZeroMQP2P Consumer] Deserialization failed.");
 		return false;
 	}
-
-	// Data
-	std::vector<uint8_t> payload_data(data + offset, data + offset + data_size);
-
-	out.message_id = message_id;
-	out.kind = kind_payload;
-	out.data_size = data_size;
-	out.data = std::move(payload_data);
 
 	return true;
 }
 
 bool ZeroMQP2PConsumer::deserialize_id(const void *raw_message, size_t len,
-                                       Payload &out) {
+                                       std::string &topic, Payload &out) {
 	const char *data = static_cast<const char *>(raw_message);
 	size_t offset = 0;
 
-	// Topic length & Topic and skip over it
+	// Topic length & Topic
 	uint8_t topic_len;
 	std::memcpy(&topic_len, data + offset, sizeof(uint8_t));
 	offset += sizeof(uint8_t);
+	topic.assign(data + offset, topic_len);
 	offset += topic_len;
 
-	// Message ID length
-	uint16_t id_len;
-	std::memcpy(&id_len, data + offset, sizeof(uint16_t));
-	offset += sizeof(uint16_t);
-
-	// Message ID
-	std::string message_id(data + offset, id_len);
-	offset += id_len;
-
-	out.message_id = message_id;
+	if (Payload::deserialize_id(data + offset, len - offset, out) == false) {
+		logger->log_error("[ZeroMQP2P Consumer] Deserialization failed.");
+		return false;
+	}
 
 	return true;
 }
 
 ZeroMQP2PConsumer::ZeroMQP2PConsumer(std::shared_ptr<Logger> logger) try
-    : IConsumer(logger), context(1), subscriber(context, ZMQ_SUB) {
+    : IConsumer(logger), context(1), subscriber(context, ZMQ_SUB),
+      deserializer_(logger) {
 	subscriber.set(zmq::sockopt::rcvtimeo, 10000);
 	logger->log_debug("[ZeroMQP2P Consumer] Constructor finished");
 } catch (const zmq::error_t &e) {
@@ -99,6 +69,9 @@ ZeroMQP2PConsumer::ZeroMQP2PConsumer(std::shared_ptr<Logger> logger) try
 }
 
 ZeroMQP2PConsumer::~ZeroMQP2PConsumer() {
+	stop_receiving_ = true;
+	deserializer_.stop();
+
 	subscriber.close();
 	context.close();
 }
@@ -194,65 +167,70 @@ void ZeroMQP2PConsumer::subscribe(const std::string &topic) {
 }
 
 void ZeroMQP2PConsumer::start_loop() {
-	zmq::message_t zmq_message;
-	Payload payload;
+	deserializer_.start(
+	    [this](const void *data, size_t len, std::string &topic, Payload &out) {
+		    return this->deserialize(data, len, topic, out);
+	    },
+	    [this](const Payload &payload, const std::string & /*topic*/,
+	           size_t /*raw_len*/) {
+		    if (payload.kind == PayloadKind::TERMINATION) {
+			    subscribed_streams.dec();
+			    logger->log_info("[ZeroMQP2P Consumer] Termination signal "
+			                     "received for message ID: "
+			                     + payload.message_id);
+			    if (subscribed_streams.get() == 0) {
+				    logger->log_info("[ZeroMQP2P Consumer] All streams "
+				                     "terminated. Exiting.");
+				    stop_receiving_ = true;
+			    }
+			    logger->log_info(
+			        "[ZeroMQP2P Consumer] Remaining subscribed streams: "
+			        + std::to_string(subscribed_streams.get()));
+		    }
+	    });
 
-	while (true) {
+	while (!stop_receiving_) {
 		try {
-			auto result = subscriber.recv(zmq_message, zmq::recv_flags::none);
+			zmq::message_t msg;
+			auto result = subscriber.recv(msg, zmq::recv_flags::none);
 			if (!result) {
 				logger->log_info(
 				    "[ZeroMQP2P Consumer] Receive timed out, retrying...");
 				continue;
 			}
 
-			const void *data_ptr = zmq_message.data();
-			const size_t data_size = zmq_message.size();
+			const void *data_ptr = msg.data();
+			const size_t data_size = msg.size();
 
-			if ( //! deserialize(data_ptr, data_size, payload)
-			    !deserialize_id(data_ptr, data_size, payload)) {
+			Payload payload;
+			std::string topic;
+			if (!deserialize_id(data_ptr, data_size, topic, payload)) {
 				logger->log_error(
 				    "[ZeroMQP2P Consumer] Deserialization failed");
 				continue;
 			}
 
-			uint8_t topic_len;
-			std::memcpy(&topic_len, data_ptr, sizeof(uint8_t));
-			std::string topic(static_cast<const char *>(data_ptr)
-			                      + sizeof(uint8_t),
-			                  topic_len);
+			logger->log_study("Reception," + payload.message_id + "," + topic);
 
-			logger->log_study("Reception," + payload.message_id + ",-1," + topic
-			                  + "," + std::to_string(zmq_message.size()));
-
-			if (payload.message_id.find(TERMINATION_SIGNAL)
-			    != std::string::npos) {
-				std::string source =
-				    payload.message_id.substr(0, payload.message_id.find(":"));
-
-				subscribed_streams.dec();
-
-				logger->log_info(
-				    "[ZeroMQP2P Consumer] Termination signal from source: "
-				    + source + " on topic: " + topic);
-
-				if (subscribed_streams.get() == 0) {
-					logger->log_info("[ZeroMQP2P Consumer] All streams "
-					                 "terminated. Exiting.");
-					break;
-				}
-
-				logger->log_info(
-				    "[ZeroMQP2P Consumer] Remaining subscribed streams: "
-				    + std::to_string(subscribed_streams.get()));
+			auto holder = std::make_shared<zmq::message_t>(std::move(msg));
+			utils::Deserializer::Item item;
+			item.holder = holder;
+			item.data = holder->data();
+			item.len = holder->size();
+			item.topic = topic;
+			item.message_id = payload.message_id;
+			if (!deserializer_.enqueue(std::move(item))) {
+				logger->log_error("[ZeroMQP2P Consumer] Deserializer queue "
+				                  "full; dropping message.");
 			}
-
 		} catch (const zmq::error_t &e) {
 			logger->log_error("[ZeroMQP2P Consumer] Receive failed: "
 			                  + std::string(e.what()));
 			continue;
 		}
 	}
+
+	deserializer_.stop();
 }
 
 void ZeroMQP2PConsumer::log_configuration() {
@@ -282,3 +260,5 @@ void ZeroMQP2PConsumer::log_configuration() {
 
 	logger->log_config("[ZeroMQP2P Consumer] [CONFIG_END]");
 }
+
+// Deserialization worker is implemented by utils::Deserializer

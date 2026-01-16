@@ -1,13 +1,15 @@
 #pragma once
 
-#include <memory>
-#include <nats/nats.h>
-#include <string>
+#include <atomic>      // for atomic
+#include <memory>      // for shared_ptr, unique_ptr
+#include <nats/nats.h> // for natsSubscription_Destroy, natsConnect...
+#include <string>      // for string
 
-#include "IConsumer.hpp"
+#include "Deserializer.hpp"
+#include "IConsumer.hpp" // for IConsumer
+
 
 class Logger;
-struct Payload;
 
 class NatsConsumer : public IConsumer {
   public:
@@ -17,9 +19,6 @@ class NatsConsumer : public IConsumer {
 	void initialize() override;
 	void subscribe(const std::string &subject) override;
 	void start_loop() override;
-	bool deserialize(const void *raw_message, size_t len,
-	                 Payload &out) override;
-	bool deserialize_id(const void *raw_message, size_t len, Payload &out);
 	void log_configuration() override;
 
   private:
@@ -31,4 +30,7 @@ class NatsConsumer : public IConsumer {
 	NatsSubscriptionPtr subscription_;
 
 	std::string nats_url_;
+
+	utils::Deserializer deserializer_;
+	std::atomic<bool> stop_receiving_{false};
 };

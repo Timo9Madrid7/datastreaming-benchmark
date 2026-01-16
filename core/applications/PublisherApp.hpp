@@ -8,6 +8,7 @@
 #include "IPublisher.hpp"
 #include "Logger.hpp"
 #include "Payload.hpp"
+#include "RateLimiter.hpp"
 
 class PublisherApp {
   protected:
@@ -22,6 +23,7 @@ class PublisherApp {
 	std::vector<Payload> payloads;
 
 	std::shared_ptr<Logger> logger;
+	utils::RateLimiter rate_limiter;
 
 	std::unique_ptr<IPublisher> publisher;
 

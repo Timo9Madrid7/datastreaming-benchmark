@@ -3,7 +3,12 @@ target_sources(core-utils PRIVATE # add more source files as needed
     utils/Utils.cpp
 )
 target_include_directories(core-utils PUBLIC # make the utils reachable for other targets
-    ${CMAKE_CURRENT_SOURCE_DIR}/utils 
+    ${CMAKE_CURRENT_SOURCE_DIR}/utils
+    ${CMAKE_SOURCE_DIR}/third_party_libs/spsc_queue/
+)
+target_link_libraries(core-utils PUBLIC
+    core-logger
+    core-payload
 )
 set_target_properties(core-utils PROPERTIES POSITION_INDEPENDENT_CODE ON) # make it possible to link this static library to shared libraries
 

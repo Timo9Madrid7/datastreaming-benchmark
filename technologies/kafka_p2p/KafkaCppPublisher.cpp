@@ -1,7 +1,6 @@
 #include "KafkaCppPublisher.hpp"
 
 #include <cstddef>
-#include <cstdint>
 #include <cstring>
 #include <librdkafka/rdkafkacpp.h>
 #include <list>
@@ -24,6 +23,10 @@ KafkaCppPublisher::~KafkaCppPublisher() {
 	logger->log_debug("[Kafka Publisher] Cleaning up Kafka producer...");
 	if (producer_) {
 		logger->log_debug("[Kafka Publisher] Polling before flush...");
+		int served = 0;
+		do {
+			served = producer_->poll(0);
+		} while (served > 0);
 		while (producer_->outq_len() > 0) {
 			producer_->poll(100);
 		}
@@ -35,10 +38,17 @@ KafkaCppPublisher::~KafkaCppPublisher() {
 }
 
 void KafkaCppPublisher::initialize() {
-	const std::string vendpoint =
+	std::string vendpoint =
 	    utils::get_env_var_or_default("PUBLISHER_ENDPOINT", "localhost");
 	const std::string port =
 	    utils::get_env_var_or_default("PUBLISHER_PORT", "9092");
+	// 0.0.0.0 is valid for bind(), not for connect(). Treat it as a common
+	// misconfiguration and default to localhost (broker runs in-container for kafka_p2p).
+	if (vendpoint == "0.0.0.0") {
+		logger->log_error(
+		    "[Kafka Publisher] PUBLISHER_ENDPOINT=0.0.0.0 is not a valid broker address; using localhost instead.");
+		vendpoint = "localhost";
+	}
 	broker_ = vendpoint + ":" + port;
 	logger->log_info("[Kafka Publisher] Using broker: " + broker_);
 
@@ -69,12 +79,13 @@ void KafkaCppPublisher::initialize() {
 	}
 
 	// Producer performance configuration (latency/throughput trade-offs)
-	conf_->set("acks", "1", errstr);
+	conf_->set("acks", "0", errstr);
 	conf_->set("linger.ms", "1", errstr);
 	conf_->set("batch.size", "262144", errstr);
 	conf_->set("batch.num.messages", "10000", errstr);
 	conf_->set("compression.type", "none", errstr);
-	conf_->set("queue.buffering.max.kbytes", "65536", errstr);
+	conf_->set("queue.buffering.max.kbytes", "4194304", errstr);
+	conf_->set("queue.buffering.max.messages", "1000000", errstr);
 
 	producer_.reset(RdKafka::Producer::create(conf_.get(), errstr));
 
@@ -86,43 +97,13 @@ void KafkaCppPublisher::initialize() {
 	log_configuration();
 }
 
-bool KafkaCppPublisher::serialize(const Payload &message, void *out) {
-	char *ptr = static_cast<char *>(out);
-
-	// Message ID Length
-	const uint16_t id_len = static_cast<uint16_t>(message.message_id.size());
-	std::memcpy(ptr, &id_len, sizeof(id_len));
-	ptr += sizeof(id_len);
-
-	// Message ID
-	std::memcpy(ptr, message.message_id.data(), id_len);
-	ptr += id_len;
-
-	// Kind
-	const uint8_t kind = static_cast<uint8_t>(message.kind);
-	std::memcpy(ptr, &kind, sizeof(kind));
-	ptr += sizeof(kind);
-
-	// Data size
-	const size_t size = static_cast<size_t>(message.data_size);
-	std::memcpy(ptr, &size, sizeof(size));
-	ptr += sizeof(size);
-
-	// Data
-	std::memcpy(ptr, message.data.data(), size);
-
-	return true;
-}
-
 void KafkaCppPublisher::send_message(const Payload &message,
                                      std::string &topic) {
-	size_t serialized_size = sizeof(uint16_t) // Message ID Length
-	    + message.message_id.size()           // Message ID
-	    + sizeof(uint8_t)                     // Kind
-	    + sizeof(size_t)                      // Data size
-	    + message.data_size;                  // Data
+	logger->log_study("Serializing," + message.message_id + "," + topic);
+
+	size_t serialized_size = message.serialized_bytes;
 	std::string serialized(serialized_size, '\0');
-	if (!serialize(message, serialized.data())) {
+	if (!Payload::serialize(message, serialized.data())) {
 		logger->log_error(
 		    "[Kafka Publisher] Serialization failed for message ID: "
 		    + message.message_id);
@@ -138,19 +119,11 @@ void KafkaCppPublisher::send_message(const Payload &message,
 		logger->log_error("[Kafka Publisher] Produce failed: "
 		                  + RdKafka::err2str(err));
 	} else {
-		logger->log_study("Publication," + message.message_id + ","
-		                  + std::to_string(message.data_size) + "," + topic
-		                  + "," + std::to_string(serialized_size));
 		logger->log_debug("[Kafka Publisher] Message queued for topic: "
 		                  + topic);
 	}
 
-	// Poll less often to reduce per-message overhead (still drives delivery
-	// reports)
-	static thread_local uint32_t poll_every = 0;
-	if ((++poll_every % 1000u) == 0u) {
-		producer_->poll(0);
-	}
+	producer_->poll(0);
 }
 
 void KafkaCppPublisher::log_configuration() {

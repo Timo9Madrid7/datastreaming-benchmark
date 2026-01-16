@@ -13,6 +13,7 @@ find_library(NATS_LIBRARY nats REQUIRED)
 target_include_directories(nats_p2p_technology PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${NATS_INCLUDE_DIR}
+    ${CMAKE_SOURCE_DIR}/third_party_libs/spsc_queue/
 )
 
 target_link_libraries(nats_p2p_technology PRIVATE

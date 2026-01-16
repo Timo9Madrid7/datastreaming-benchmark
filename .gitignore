@@ -42,6 +42,8 @@ docker-compose.override.yml
 *.puml
 *.csv
 *.json
+logs/
+logs_*/
 
 # Ignore Python virtual environments (if used for data processing)
 venv/
@@ -50,7 +52,6 @@ __pycache__/
 
 # Ignore CSV and benchmarking results
 results/*.csv
-logs/
 test_scenarios/
 
 # Ignore environment-specific files

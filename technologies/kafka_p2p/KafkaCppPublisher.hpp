@@ -15,7 +15,6 @@ class KafkaCppPublisher : public IPublisher {
 	void send_message(const Payload &message, std::string &topic) override;
 
   private:
-	bool serialize(const Payload &message, void *out) override;
 	void log_configuration() override;
 
 	std::string broker_;

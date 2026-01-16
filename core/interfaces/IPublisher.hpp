@@ -6,19 +6,13 @@
 #include "Logger.hpp"
 #include "Payload.hpp"
 
+struct Payload;
+
 class IPublisher {
   protected:
 	std::shared_ptr<Logger> logger;
 
   private:
-	/**
-	@brief Serializes a vector of Payload objects into a raw message.
-	@param message The Payload object to serialize.
-	@param out The output buffer to store the serialized message.
-	@return True if serialization was successful, false otherwise.
-	*/
-	virtual bool serialize(const Payload &message, void *out) = 0;
-
 	/**
 	@brief Logs the configuration of the publisher.
 	*/

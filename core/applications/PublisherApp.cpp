@@ -40,6 +40,24 @@ const Payload &PublisherApp::pick_random_payload() {
 PublisherApp::PublisherApp(Logger::LogLevel log_level) {
 	logger = std::make_shared<Logger>(log_level);
 	load_from_env();
+	// Default: 200 MiB/s. Can be overridden via MAX_SEND_RATE_MBPS.
+	const std::string env_rate_mbps =
+	    utils::get_env_var_or_default("MAX_SEND_RATE_MBPS", "200");
+	try {
+		const long long mbps = std::stoll(env_rate_mbps);
+		const uint64_t bytes_per_sec =
+		    (mbps <= 0)
+		        ? utils::RateLimiter::kDefaultMaxBytesPerSec
+		        : static_cast<uint64_t>(mbps) * 1024ULL * 1024ULL;
+		rate_limiter.set_rate(bytes_per_sec);
+		logger->log_debug("[PublisherApp] MAX_SEND_RATE_MBPS=" + env_rate_mbps
+		                  + " => " + std::to_string(rate_limiter.rate())
+		                  + " bytes/s");
+	} catch (...) {
+		logger->log_error(
+		    "[PublisherApp] Invalid MAX_SEND_RATE_MBPS='" + env_rate_mbps
+		    + "', using default 200MiB/s");
+	}
 	generate_payloads(payload_size, payload_samples);
 }
 
@@ -144,11 +162,13 @@ void PublisherApp::create_publisher() {
 
 void PublisherApp::publish_on_topic(std::string topic, Payload message) {
 	const Payload &base = pick_random_payload();
+	// Throttle by payload bytes (serialization overhead is small vs payload).
+	rate_limiter.acquire(base.serialized_bytes);
 	logger->log_info("[PublisherApp] Publishing," + message.message_id + ","
-	                 + std::to_string(base.data_size) + "," + topic);
+	                 + std::to_string(base.serialized_bytes) + "," + topic);
 	publisher->send_message(message, topic); // technology-specific send
 	logger->log_info("[PublisherApp] Published," + message.message_id + ","
-	                 + std::to_string(base.data_size) + "," + topic);
+	                 + std::to_string(base.serialized_bytes) + "," + topic);
 }
 
 void PublisherApp::publish_on_all_topics(Payload message) {

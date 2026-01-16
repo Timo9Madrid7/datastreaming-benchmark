@@ -198,11 +198,18 @@ class ContainerManager:
         )
         try:
             container_name = f"{tech_name}-{pub_id}"
-            publisher_endpoint = (
-                "0.0.0.0"
-                if "p2p" in container_name
-                else "benchmark_" + tech_name + "_broker"
-            )
+            # NOTE: Most p2p technologies bind a server socket and use 0.0.0.0.
+            # kafka_p2p is special: the publisher container also runs the Kafka broker,
+            # so the publisher must connect to a *reachable* broker address.
+            # Using 0.0.0.0 as a client destination causes connection retries/backoff.
+            if tech_name == "kafka_p2p":
+                publisher_endpoint = "localhost"
+            else:
+                publisher_endpoint = (
+                    "0.0.0.0"
+                    if "p2p" in container_name
+                    else "benchmark_" + tech_name + "_broker"
+                )
             environment = {
                 "TECHNOLOGY": tech_name,
                 "CONTAINER_ID": pub_id,
@@ -278,6 +285,10 @@ class ContainerManager:
                 "TOPICS": ",".join(topics_list),
                 "BACKLOG_SIZE": backlog_size,
             }
+            if tech_name == "kafka_p2p":
+                # Allow multiple consumers to split partitions and scale throughput.
+                # Without this, each consumer uses its own group and receives the full stream.
+                environment["KAFKA_GROUP_ID"] = "benchmark_kafka_p2p_group"
             if "p2p" in tech_name:
                 logger.debug(f"Using p2p broker {publishers_list}")
                 environment["CONSUMER_ENDPOINT"] = ",".join(publishers_list)

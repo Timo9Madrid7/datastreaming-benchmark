@@ -1,11 +1,9 @@
 #include "NatsPublisher.hpp"
 
-#include <cstdint>
 #include <cstring>
 #include <nats/status.h>
 #include <stdexcept>
 #include <string>
-#include <vector>
 
 #include "Logger.hpp"
 #include "Payload.hpp"
@@ -54,34 +52,12 @@ void NatsPublisher::initialize() {
 	log_configuration();
 }
 
-bool NatsPublisher::serialize(const Payload &message, void *out) {
-	char *ptr = static_cast<char *>(out);
-
-	const uint16_t id_len = static_cast<uint16_t>(message.message_id.size());
-	std::memcpy(ptr, &id_len, sizeof(id_len));
-	ptr += sizeof(id_len);
-
-	std::memcpy(ptr, message.message_id.data(), id_len);
-	ptr += id_len;
-
-	const uint8_t kind = static_cast<uint8_t>(message.kind);
-	std::memcpy(ptr, &kind, sizeof(kind));
-	ptr += sizeof(kind);
-
-	const size_t size = static_cast<size_t>(message.data_size);
-	std::memcpy(ptr, &size, sizeof(size));
-	ptr += sizeof(size);
-
-	std::memcpy(ptr, message.data.data(), size);
-
-	return true;
-}
-
 void NatsPublisher::send_message(const Payload &message, std::string &subject) {
-	const size_t serialized_size = sizeof(uint16_t) + message.message_id.size()
-	    + sizeof(uint8_t) + sizeof(size_t) + message.data_size;
+	logger->log_study("Serializing," + message.message_id + "," + subject);
+
+	const size_t serialized_size = message.serialized_bytes;
 	std::string serialized(serialized_size, '\0');
-	if (!serialize(message, serialized.data())) {
+	if (!Payload::serialize(message, serialized.data())) {
 		logger->log_error(
 		    "[NATS Publisher] Serialization failed for message ID: "
 		    + message.message_id);
@@ -98,8 +74,8 @@ void NatsPublisher::send_message(const Payload &message, std::string &subject) {
 		return;
 	}
 
-	logger->log_study("Publication," + message.message_id + ","
-	                  + std::to_string(message.data_size) + "," + subject + ","
+	logger->log_study("Publication," + message.message_id + "," + subject + ","
+	                  + std::to_string(message.data_size) + ","
 	                  + std::to_string(serialized_size));
 }
 

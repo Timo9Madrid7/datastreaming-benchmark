@@ -7,6 +7,7 @@ from analysis.metrics import (
     average_curve,
     average_latency,
     latency_stats_for_run,
+    latency_samples_for_run,
     resource_usage_for_run,
     throughput_for_run,
 )
@@ -32,8 +33,17 @@ def load_throughput(
 
 
 @st.cache_data(show_spinner=False)
-def load_latency_stats(scenario: str, tech: str, run: str) -> pl.DataFrame:
+def load_latency_stats(
+    scenario: str,
+    tech: str,
+    run: str,
+) -> pl.DataFrame:
     return latency_stats_for_run(scenario, tech, run)
+
+
+@st.cache_data(show_spinner=False)
+def load_latency_samples(scenario: str, tech: str, run: str) -> pl.DataFrame:
+    return latency_samples_for_run(scenario, tech, run)
 
 
 @st.cache_data(show_spinner=False)
@@ -53,9 +63,84 @@ def main() -> None:
 
     duration_s = infer_duration_seconds_from_logs(scenario)
     if duration_s is None:
-        st.error("Could not infer scenario duration from logs.")
-        return
-    st.sidebar.caption(f"Duration inferred from logs: {duration_s}s")
+        st.sidebar.caption("Duration inferred from logs: unknown")
+    else:
+        st.sidebar.caption(
+            f"Duration inferred from logs (nominal): {duration_s}s"
+        )
+
+    st.sidebar.subheader("Trim unstable edges")
+    # IMPORTANT: do not treat inferred duration as real runtime.
+    # Consumers can lag behind, making actual event timelines longer.
+    max_offset = 3600
+    start_offset_s = int(
+        st.sidebar.number_input(
+            "Start offset (s)",
+            min_value=0,
+            max_value=max_offset,
+            value=5,
+            step=1,
+            help="Ignore the first N seconds for throughput and latency.",
+        )
+    )
+    end_offset_s = int(
+        st.sidebar.number_input(
+            "End offset (s)",
+            min_value=0,
+            max_value=max_offset,
+            value=5,
+            step=1,
+            help="Ignore the last N seconds for throughput and latency.",
+        )
+    )
+    st.sidebar.caption(
+        "Effective window (per run): "
+        f"{start_offset_s}s .. (max time - {end_offset_s}s)"
+    )
+
+    def _trim_throughput_window(frame: pl.DataFrame) -> pl.DataFrame:
+        if frame.is_empty():
+            return frame
+        max_time_s = frame.select(pl.col("time_s").max()).item()
+        if max_time_s is None:
+            return frame.head(0)
+        end_s = int(max_time_s) - end_offset_s
+        if end_s < start_offset_s:
+            return frame.head(0)
+        return frame.filter(
+            (pl.col("time_s") >= start_offset_s) & (pl.col("time_s") <= end_s)
+        )
+
+    def _latency_stats_with_offset(scenario: str, tech: str, run: str) -> pl.DataFrame:
+        if start_offset_s == 0 and end_offset_s == 0:
+            return load_latency_stats(scenario, tech, run)
+
+        samples = load_latency_samples(scenario, tech, run)
+        if samples.is_empty():
+            return pl.DataFrame()
+
+        max_time_s = samples.select(pl.col("time_s").max()).item()
+        if max_time_s is None:
+            return pl.DataFrame()
+        end_s = int(max_time_s) - end_offset_s
+        if end_s < start_offset_s:
+            return pl.DataFrame()
+        samples = samples.filter(
+            (pl.col("time_s") >= start_offset_s) & (pl.col("time_s") <= end_s)
+        )
+        if samples.is_empty():
+            return pl.DataFrame()
+
+        return (
+            samples.group_by("segment")
+            .agg(
+                pl.col("latency_ms").quantile(0.50).alias("p50_ms"),
+                pl.col("latency_ms").quantile(0.90).alias("p90_ms"),
+                pl.col("latency_ms").quantile(0.99).alias("p99_ms"),
+                pl.col("latency_ms").max().alias("max_ms"),
+            )
+            .sort("segment")
+        )
 
     techs_available = sorted(scenarios[scenario].keys())
     selected_techs = st.sidebar.multiselect(
@@ -88,42 +173,50 @@ def main() -> None:
         value=10,
         step=1,
     )
-    throughput_event_type = st.sidebar.selectbox(
-        "Throughput event type",
-        ["Publication", "Reception"],
-        index=0,
-    )
     show_individual = st.sidebar.checkbox("Show individual runs", value=False)
 
-    st.header("Performance Summary")
-    kpi_columns = st.columns(len(selected_techs))
-    kpi_data = {}
-
-    throughput_frames: list[pl.DataFrame] = []
+    throughput_event_types = ["Publication", "Reception", "Deserialized"]
+    throughput_frames_by_event: dict[str, list[pl.DataFrame]] = {
+        event_type: [] for event_type in throughput_event_types
+    }
     latency_frames: list[pl.DataFrame] = []
     cpu_frames: list[pl.DataFrame] = []
     memory_frames: list[pl.DataFrame] = []
+    page_cache_frames: list[pl.DataFrame] = []
     disk_frames: list[pl.DataFrame] = []
+    network_rx_frames: list[pl.DataFrame] = []
+    network_tx_frames: list[pl.DataFrame] = []
 
     for tech in selected_techs:
-        run_frames = []
+        run_frames_by_event: dict[str, list[pl.DataFrame]] = {
+            event_type: [] for event_type in throughput_event_types
+        }
         latency_stats_frames = []
         cpu_runs = []
         mem_runs = []
+        page_cache_runs = []
         disk_runs = []
+        net_rx_runs = []
+        net_tx_runs = []
         for run in runs_by_tech.get(tech, []):
             if run not in selected_runs:
                 continue
-            throughput = load_throughput(
-                scenario, tech, run, window_s, throughput_event_type
-            )
-            if not throughput.is_empty():
-                run_frames.append(
-                    throughput.with_columns(
-                        pl.lit(tech).alias("tech"), pl.lit(run).alias("run")
-                    )
+            for event_type in throughput_event_types:
+                throughput = load_throughput(
+                    scenario,
+                    tech,
+                    run,
+                    window_s,
+                    event_type,
                 )
-            latency_stats = load_latency_stats(scenario, tech, run)
+                throughput = _trim_throughput_window(throughput)
+                if not throughput.is_empty():
+                    run_frames_by_event[event_type].append(
+                        throughput.with_columns(
+                            pl.lit(tech).alias("tech"), pl.lit(run).alias("run")
+                        )
+                    )
+            latency_stats = _latency_stats_with_offset(scenario, tech, run)
             if not latency_stats.is_empty():
                 latency_stats_frames.append(latency_stats)
             resources = load_resources(scenario, tech, run)
@@ -140,23 +233,45 @@ def main() -> None:
                         pl.lit(run).alias("run"),
                     )
                 )
+                page_cache_runs.append(
+                    resources.select(["time_s", "page_cache_mb"]).with_columns(
+                        pl.lit(tech).alias("tech"),
+                        pl.lit(run).alias("run"),
+                    )
+                )
                 disk_runs.append(
                     resources.select(["time_s", "disk_throughput_mb_s"]).with_columns(
                         pl.lit(tech).alias("tech"),
                         pl.lit(run).alias("run"),
                     )
                 )
-
-        avg_throughput = average_curve(
-            [frame.select(["time_s", "throughput_mb_s"]) for frame in run_frames],
-            "throughput_mb_s",
-        )
-        if not avg_throughput.is_empty():
-            throughput_frames.append(
-                avg_throughput.with_columns(
-                    pl.lit(tech).alias("tech"), pl.lit("avg").alias("run")
+                net_rx_runs.append(
+                    resources.select(["time_s", "network_rx_mb_s"]).with_columns(
+                        pl.lit(tech).alias("tech"),
+                        pl.lit(run).alias("run"),
+                    )
                 )
+                net_tx_runs.append(
+                    resources.select(["time_s", "network_tx_mb_s"]).with_columns(
+                        pl.lit(tech).alias("tech"),
+                        pl.lit(run).alias("run"),
+                    )
+                )
+
+        for event_type in throughput_event_types:
+            avg_throughput = average_curve(
+                [
+                    frame.select(["time_s", "throughput_mb_s"])
+                    for frame in run_frames_by_event[event_type]
+                ],
+                "throughput_mb_s",
             )
+            if not avg_throughput.is_empty():
+                throughput_frames_by_event[event_type].append(
+                    avg_throughput.with_columns(
+                        pl.lit(tech).alias("tech"), pl.lit("avg").alias("run")
+                    )
+                )
         avg_latency = average_latency(latency_stats_frames)
         if not avg_latency.is_empty():
             latency_frames.append(avg_latency.with_columns(pl.lit(tech).alias("tech")))
@@ -179,6 +294,16 @@ def main() -> None:
                     pl.lit(tech).alias("tech"), pl.lit("avg").alias("run")
                 )
             )
+        avg_page_cache = average_curve(
+            [frame.select(["time_s", "page_cache_mb"]) for frame in page_cache_runs],
+            "page_cache_mb",
+        )
+        if not avg_page_cache.is_empty():
+            page_cache_frames.append(
+                avg_page_cache.with_columns(
+                    pl.lit(tech).alias("tech"), pl.lit("avg").alias("run")
+                )
+            )
         avg_disk = average_curve(
             [frame.select(["time_s", "disk_throughput_mb_s"]) for frame in disk_runs],
             "disk_throughput_mb_s",
@@ -189,66 +314,78 @@ def main() -> None:
                     pl.lit(tech).alias("tech"), pl.lit("avg").alias("run")
                 )
             )
-
-        avg_throughput_value = (
-            avg_throughput.select(pl.col("throughput_mb_s").mean()).item()
-            if not avg_throughput.is_empty()
-            else 0
+        avg_net_rx = average_curve(
+            [frame.select(["time_s", "network_rx_mb_s"]) for frame in net_rx_runs],
+            "network_rx_mb_s",
         )
-        avg_latency_value = (
-            avg_latency.select(pl.col("p99_ms")).item()
-            if not avg_latency.is_empty()
-            else 0
-        )
-        kpi_data[tech] = (avg_throughput_value, avg_latency_value)
-
-    for column, tech in zip(kpi_columns, selected_techs):
-        throughput_value, latency_value = kpi_data.get(tech, (0, 0))
-        column.metric(
-            label=f"{tech} Avg {throughput_event_type} Throughput (MB/s)",
-            value=f"{throughput_value:,.2f}",
-        )
-        column.metric(label=f"{tech} P99 Latency (ms)", value=f"{latency_value:,.2f}")
-
-    st.header(f"{throughput_event_type} Throughput (MB/s)")
-    throughput_display = (
-        pl.concat(throughput_frames, how="vertical")
-        if throughput_frames
-        else pl.DataFrame()
-    )
-    if show_individual:
-        individual_frames = [
-            frame
-            for tech in selected_techs
-            for frame in [
-                load_throughput(
-                    scenario, tech, run, window_s, throughput_event_type
-                ).with_columns(pl.lit(tech).alias("tech"), pl.lit(run).alias("run"))
-                for run in runs_by_tech.get(tech, [])
-                if run in selected_runs
-            ]
-            if not frame.is_empty()
-        ]
-        if individual_frames:
-            throughput_display = pl.concat(
-                [throughput_display, *individual_frames], how="vertical"
+        if not avg_net_rx.is_empty():
+            network_rx_frames.append(
+                avg_net_rx.with_columns(
+                    pl.lit(tech).alias("tech"), pl.lit("avg").alias("run")
+                )
             )
-    if throughput_display.is_empty():
-        st.info("No throughput data available for the selected filters.")
-    else:
-        st.altair_chart(
-            line_chart(
-                throughput_display.with_columns(
-                    (pl.col("tech") + " (" + pl.col("run") + ")").alias("series")
-                ),
-                x="time_s",
-                y="throughput_mb_s",
-                color="series",
-                tooltip=["time_s", "throughput_mb_s", "tech", "run"],
-                y_title="Throughput (MB/s)",
-            ),
-            width="stretch",
+        avg_net_tx = average_curve(
+            [frame.select(["time_s", "network_tx_mb_s"]) for frame in net_tx_runs],
+            "network_tx_mb_s",
         )
+        if not avg_net_tx.is_empty():
+            network_tx_frames.append(
+                avg_net_tx.with_columns(
+                    pl.lit(tech).alias("tech"), pl.lit("avg").alias("run")
+                )
+            )
+
+    st.header("Throughput (MB/s)")
+    for event_type in throughput_event_types:
+        st.subheader(event_type)
+        throughput_display = (
+            pl.concat(throughput_frames_by_event[event_type], how="vertical")
+            if throughput_frames_by_event[event_type]
+            else pl.DataFrame()
+        )
+        if show_individual:
+            individual_frames = [
+                frame
+                for tech in selected_techs
+                for frame in [
+                    _trim_throughput_window(
+                        load_throughput(
+                            scenario,
+                            tech,
+                            run,
+                            window_s,
+                            event_type,
+                        )
+                    ).with_columns(
+                        pl.lit(tech).alias("tech"), pl.lit(run).alias("run")
+                    )
+                    for run in runs_by_tech.get(tech, [])
+                    if run in selected_runs
+                ]
+                if not frame.is_empty()
+            ]
+            if individual_frames:
+                throughput_display = pl.concat(
+                    [throughput_display, *individual_frames], how="vertical"
+                )
+        if throughput_display.is_empty():
+            st.info(
+                f"No {event_type} throughput data available for the selected filters."
+            )
+        else:
+            st.altair_chart(
+                line_chart(
+                    throughput_display.with_columns(
+                        (pl.col("tech") + " (" + pl.col("run") + ")").alias("series")
+                    ),
+                    x="time_s",
+                    y="throughput_mb_s",
+                    color="series",
+                    tooltip=["time_s", "throughput_mb_s", "tech", "run"],
+                    y_title=f"{event_type} throughput (MB/s)",
+                ),
+                width="stretch",
+            )
 
     st.header("Latency (ms)")
     latency_table_frame = (
@@ -257,13 +394,17 @@ def main() -> None:
     if latency_table_frame.is_empty():
         st.info("No latency data available for the selected filters.")
     else:
-        latency_table_frame = latency_table_frame.select(
-            pl.col("tech").alias("tech_name"),
-            pl.col("p99_ms").round(2).alias("P99_avg"),
-            pl.col("p90_ms").round(2).alias("P90_avg"),
-            pl.col("p50_ms").round(2).alias("P50_avg"),
-            pl.col("max_ms").round(2).alias("max_avg"),
-        ).sort("P99_avg", descending=True)
+        latency_table_frame = (
+            latency_table_frame.select(
+                pl.col("tech").alias("tech_name"),
+                pl.col("segment"),
+                pl.col("p50_ms").round(2).alias("P50"),
+                pl.col("p90_ms").round(2).alias("P90"),
+                pl.col("p99_ms").round(2).alias("P99"),
+                pl.col("max_ms").round(2).alias("Max"),
+            )
+            .sort(["segment", "P99"], descending=[False, True])
+        )
         st.dataframe(latency_table(latency_table_frame), width="stretch")
 
     st.header("Resource Usage")
@@ -275,6 +416,21 @@ def main() -> None:
     )
     disk_display = (
         pl.concat(disk_frames, how="vertical") if disk_frames else pl.DataFrame()
+    )
+    page_cache_display = (
+        pl.concat(page_cache_frames, how="vertical")
+        if page_cache_frames
+        else pl.DataFrame()
+    )
+    network_rx_display = (
+        pl.concat(network_rx_frames, how="vertical")
+        if network_rx_frames
+        else pl.DataFrame()
+    )
+    network_tx_display = (
+        pl.concat(network_tx_frames, how="vertical")
+        if network_tx_frames
+        else pl.DataFrame()
     )
     if show_individual:
         for tech in selected_techs:
@@ -316,6 +472,36 @@ def main() -> None:
                     ],
                     how="vertical",
                 )
+                page_cache_display = pl.concat(
+                    [
+                        page_cache_display,
+                        resources.select(["time_s", "page_cache_mb"]).with_columns(
+                            pl.lit(tech).alias("tech"),
+                            pl.lit(run).alias("run"),
+                        ),
+                    ],
+                    how="vertical",
+                )
+                network_rx_display = pl.concat(
+                    [
+                        network_rx_display,
+                        resources.select(["time_s", "network_rx_mb_s"]).with_columns(
+                            pl.lit(tech).alias("tech"),
+                            pl.lit(run).alias("run"),
+                        ),
+                    ],
+                    how="vertical",
+                )
+                network_tx_display = pl.concat(
+                    [
+                        network_tx_display,
+                        resources.select(["time_s", "network_tx_mb_s"]).with_columns(
+                            pl.lit(tech).alias("tech"),
+                            pl.lit(run).alias("run"),
+                        ),
+                    ],
+                    how="vertical",
+                )
 
     if cpu_display.is_empty():
         st.info("No resource data available for the selected filters.")
@@ -351,6 +537,36 @@ def main() -> None:
         tooltip=["time_s", "disk_throughput_mb_s", "tech", "run"],
         y_title="Disk Throughput (MB/s)",
     )
+    page_cache_chart = line_chart(
+        page_cache_display.with_columns(
+            (pl.col("tech") + " (" + pl.col("run") + ")").alias("series")
+        ),
+        x="time_s",
+        y="page_cache_mb",
+        color="series",
+        tooltip=["time_s", "page_cache_mb", "tech", "run"],
+        y_title="Page Cache (MB)",
+    )
+    network_rx_chart = line_chart(
+        network_rx_display.with_columns(
+            (pl.col("tech") + " (" + pl.col("run") + ")").alias("series")
+        ),
+        x="time_s",
+        y="network_rx_mb_s",
+        color="series",
+        tooltip=["time_s", "network_rx_mb_s", "tech", "run"],
+        y_title="Network In (MB/s)",
+    )
+    network_tx_chart = line_chart(
+        network_tx_display.with_columns(
+            (pl.col("tech") + " (" + pl.col("run") + ")").alias("series")
+        ),
+        x="time_s",
+        y="network_tx_mb_s",
+        color="series",
+        tooltip=["time_s", "network_tx_mb_s", "tech", "run"],
+        y_title="Network Out (MB/s)",
+    )
 
     st.subheader("CPU Usage")
     st.altair_chart(cpu_chart, width="stretch")
@@ -358,6 +574,12 @@ def main() -> None:
     st.altair_chart(memory_chart, width="stretch")
     st.subheader("Disk Throughput")
     st.altair_chart(disk_chart, width="stretch")
+    st.subheader("Page Cache")
+    st.altair_chart(page_cache_chart, width="stretch")
+    st.subheader("Network In")
+    st.altair_chart(network_rx_chart, width="stretch")
+    st.subheader("Network Out")
+    st.altair_chart(network_tx_chart, width="stretch")
 
 
 if __name__ == "__main__":
