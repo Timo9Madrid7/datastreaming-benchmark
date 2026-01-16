@@ -34,8 +34,8 @@ done
 
 # Pre-create topics to avoid auto-create/metadata delays impacting early messages.
 if [ -n "${TOPICS:-}" ]; then
-  PARTITIONS="${KAFKA_TOPIC_PARTITIONS:-4}"
-  REPL_FACTOR="${KAFKA_TOPIC_REPLICATION_FACTOR:-1}"
+  PARTITIONS="1"
+  REPL_FACTOR="1"
   old_ifs="$IFS"
   IFS=','
   for t in $TOPICS; do
@@ -52,6 +52,7 @@ if [ -n "${TOPICS:-}" ]; then
   done
   IFS="$old_ifs"
 fi
+
 
 if [ $# -eq 0 ]; then
   set -- INFO DEBUG STUDY ERROR
