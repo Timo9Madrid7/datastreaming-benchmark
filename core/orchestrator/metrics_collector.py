@@ -160,9 +160,12 @@ class MetricsCollector:
                     memory_stats = stats.get("memory_stats") or {}
                     memory_usage_total: float = memory_stats.get("usage", 0)
                     memory_details: dict = memory_stats.get("stats") or {}
+                    file_cache = memory_details.get("file")
                     page_cache: float = (
-                        memory_details.get("file")
-                        or (memory_details.get("active_file", 0) + memory_details.get("inactive_file", 0))
+                        file_cache
+                        if file_cache is not None
+                        else memory_details.get("active_file", 0)
+                        + memory_details.get("inactive_file", 0)
                     )
                     # Report memory usage excluding page cache.
                     memory_usage: float = max(memory_usage_total - page_cache, 0)
