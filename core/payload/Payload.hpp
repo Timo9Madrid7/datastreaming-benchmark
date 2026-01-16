@@ -1,18 +1,28 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <string>
 #include <vector>
 
-enum class PayloadKind { TERMINATION = 0, BOOLEAN, FLAT, COMPLEX };
+enum class PayloadKind { TERMINATION = 0, FLAT, COMPLEX };
 const std::string TERMINATION_SIGNAL = "__END__";
 
 struct Payload {
+	struct InnerPayload {
+		size_t double_size = 0;
+		size_t string_size = 0;
+		std::vector<double> doubles;
+		std::vector<std::string> strings;
+	};
+
 	std::string message_id;
 	PayloadKind kind;
 	size_t data_size;
 	std::vector<uint8_t> data;
+	InnerPayload inner_payload;
+	size_t serialized_bytes = 0;
 
 	/**
 	@brief Create a payload with specified parameters
@@ -33,7 +43,15 @@ struct Payload {
 	@return New Payload object with updated message ID
 	*/
 	static Payload reuse_with_new_id(const std::string &publisher_id,
-	                                 int sequence_number, Payload message);
+	                                 int sequence_number,
+	                                 const Payload &message);
+
+	/**
+	@brief Compute serialized byte size for a payload
+	@param message Payload to measure
+	@return Total bytes required to serialize
+	*/
+	static size_t serialized_size(const Payload &message) noexcept;
 
 	/**
 	@brief Convert PayloadKind enum to string representation
