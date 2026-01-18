@@ -4,9 +4,11 @@
 #include <arrow/result.h>
 #include <arrow/type.h>
 #include <arrow/type_fwd.h>
+#include <cstdint>
 #include <cstdlib>
 #include <exception>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -21,11 +23,8 @@ const std::shared_ptr<arrow::Schema> ArrowFlightPublisher::schema_ =
         arrow::field("message_id", arrow::utf8()),
         arrow::field("kind", arrow::uint8()),
         arrow::field("bytes", arrow::binary()),
-        arrow::field("nested",
-                     arrow::struct_({
-                         arrow::field("doubles", arrow::list(arrow::float64())),
-                         arrow::field("strings", arrow::list(arrow::utf8())),
-                     })),
+		arrow::field("doubles", arrow::list(arrow::float64())),
+		arrow::field("strings", arrow::list(arrow::utf8())),
     });
 
 ArrowFlightPublisher::ArrowFlightPublisher(std::shared_ptr<Logger> logger) try
@@ -130,15 +129,23 @@ void ArrowFlightPublisher::initialize() {
 	    utils::get_env_var_or_default("PUBLISHER_ENDPOINT", "0.0.0.0");
 	const std::string port_str =
 	    utils::get_env_var_or_default("PUBLISHER_PORT", "8815");
-	const std::string max_batch_bytes =
-	    utils::get_env_var_or_default("MAX_BATCH_BYTES", "8388608");
+	const std::optional<std::string> payload_size_str = utils::get_env_var("PAYLOAD_SIZE");
 
 	std::string err_msg;
+
+	if (!payload_size_str) {
+		err_msg = "[Flight Publisher] PAYLOAD_SIZE environment variable is not set.";
+		logger->log_error(err_msg);
+		throw std::runtime_error(err_msg);
+	}
 
 	int port = 0;
 	try {
 		port = std::stoi(port_str);
-		MAX_BATCH_BYTES = std::stoull(max_batch_bytes);
+		uint64_t payload_size = std::stoull(payload_size_str.value());
+		if (payload_size >= 4 * 1024 * 1024) { // 4 MB
+			MAX_BATCH_BYTES = 16 * 1024 * 1024; // 16 MB
+		}
 	} catch (...) {
 		err_msg = "[Flight Publisher] Invalid port or MAX_BATCH_BYTES value.";
 		logger->log_error(err_msg);
@@ -192,44 +199,47 @@ bool ArrowFlightPublisher::serialize(const Payload &message, void *out) {
 	if (!st.ok())
 		return false;
 
-	if (!builder->nested_builder) {
+	if (!builder->doubles_builder || !builder->strings_builder) {
 		return false;
 	}
 
 	// nested payload (only for COMPLEX)
 	if (message.kind == PayloadKind::COMPLEX) {
-		st = builder->nested_builder->Append();
+		st = builder->doubles_builder->Append();
 		if (!st.ok())
 			return false;
-
-		auto *doubles_list = static_cast<arrow::ListBuilder *>(
-		    builder->nested_builder->field_builder(0));
-		auto *strings_list = static_cast<arrow::ListBuilder *>(
-		    builder->nested_builder->field_builder(1));
-		auto *doubles_values =
-		    static_cast<arrow::DoubleBuilder *>(doubles_list->value_builder());
-		auto *strings_values =
-		    static_cast<arrow::StringBuilder *>(strings_list->value_builder());
-
-		st = doubles_list->Append();
-		if (!st.ok())
-			return false;
-		for (const auto &d : message.nested_payload.doubles) {
-			st = doubles_values->Append(d);
+		auto *doubles_values = static_cast<arrow::DoubleBuilder *>(
+		    builder->doubles_builder->value_builder());
+		const auto &doubles = message.nested_payload.doubles;
+		if (!doubles.empty()) {
+			st = doubles_values->AppendValues(doubles.data(),
+			                               static_cast<int64_t>(doubles.size()));
 			if (!st.ok())
 				return false;
 		}
 
-		st = strings_list->Append();
+		st = builder->strings_builder->Append();
 		if (!st.ok())
 			return false;
+		auto *strings_values = static_cast<arrow::StringBuilder *>(
+		    builder->strings_builder->value_builder());
+		// Reduce reallocs for typical COMPLEX payload patterns.
+		if (!message.nested_payload.strings.empty()) {
+			(void)strings_values->Reserve(
+			    static_cast<int64_t>(message.nested_payload.strings.size()));
+			(void)strings_values->ReserveData(
+			    static_cast<int64_t>(message.nested_payload.string_size));
+		}
 		for (const auto &s : message.nested_payload.strings) {
 			st = strings_values->Append(s);
 			if (!st.ok())
 				return false;
 		}
 	} else {
-		st = builder->nested_builder->AppendNull();
+		st = builder->doubles_builder->AppendNull();
+		if (!st.ok())
+			return false;
+		st = builder->strings_builder->AppendNull();
 		if (!st.ok())
 			return false;
 	}
@@ -298,8 +308,7 @@ void ArrowFlightPublisher::log_configuration() {
 	logger->log_info("[CONFIG] PUBLISHER_PORT: "
 	                 + utils::get_env_var_or_default("PUBLISHER_PORT", "8815"));
 	logger->log_info(
-	    "[CONFIG] MAX_BATCH_BYTES: "
-	    + utils::get_env_var_or_default("MAX_BATCH_BYTES", "8388608"));
+	    "[CONFIG] MAX_BATCH_BYTES: " + std::to_string(MAX_BATCH_BYTES));
 	logger->log_info("[CONFIG] TOPICS: "
 	                 + utils::get_env_var_or_default("TOPICS", ""));
 	logger->log_config("[Flight Publisher] [CONFIG_END]");
