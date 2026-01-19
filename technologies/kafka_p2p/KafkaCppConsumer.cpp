@@ -156,8 +156,9 @@ void KafkaCppConsumer::initialize() {
 	conf_->set("fetch.min.bytes", "1", err_msg);
 	conf_->set("fetch.wait.max.ms", "5", err_msg);
 
-	conf_->set("max.partition.fetch.bytes", "8388608", err_msg);
-	conf_->set("fetch.message.max.bytes", "8388608", err_msg);
+	// Support larger messages if needed (up to 16MB here).
+	conf_->set("max.partition.fetch.bytes", "16777216", err_msg);
+	conf_->set("fetch.message.max.bytes", "16777216", err_msg);
 	conf_->set("queued.max.messages.kbytes", "4194304", err_msg);
 
 	consumer_.reset(RdKafka::KafkaConsumer::create(conf_.get(), err_msg));
