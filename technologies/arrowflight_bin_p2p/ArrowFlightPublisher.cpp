@@ -1,9 +1,14 @@
 #include "ArrowFlightPublisher.hpp"
 
 #include <arrow/flight/client.h>
+#include <arrow/flight/types.h>
+#include <arrow/ipc/options.h>
+#include <arrow/ipc/writer.h>
 #include <arrow/result.h>
+#include <arrow/status.h>
 #include <arrow/type.h>
 #include <arrow/type_fwd.h>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
@@ -18,13 +23,22 @@
 #include "Payload.hpp"
 #include "Utils.hpp"
 
-const std::shared_ptr<arrow::Schema> ArrowFlightPublisher::schema_ =
+const std::shared_ptr<arrow::Schema> ArrowFlightPublisher::struct_schema_ =
     arrow::schema({
         arrow::field("message_id", arrow::utf8()),
         arrow::field("kind", arrow::uint8()),
         arrow::field("bytes", arrow::binary()),
         arrow::field("doubles", arrow::list(arrow::float64())),
         arrow::field("strings", arrow::list(arrow::utf8())),
+    });
+
+const std::shared_ptr<arrow::Schema> ArrowFlightPublisher::data_schema_ =
+    arrow::schema({
+        arrow::field("message_id", arrow::utf8()),
+        arrow::field("kind", arrow::uint8()),
+        arrow::field("bytes", arrow::binary()),
+        arrow::field("doubles", arrow::binary()),
+        arrow::field("strings", arrow::binary()),
     });
 
 ArrowFlightPublisher::ArrowFlightPublisher(std::shared_ptr<Logger> logger) try
@@ -118,9 +132,29 @@ arrow::Status ArrowFlightPublisher::FlightServerLight::DoGet(
 
 	auto state = publisher_->get_or_create_stream_(ticket);
 	auto reader = std::make_shared<BlockingQueueRecordBatchReader>(
-	    ArrowFlightPublisher::schema_, state);
+	    ArrowFlightPublisher::data_schema_, state);
 
 	*stream = std::make_unique<arrow::flight::RecordBatchStream>(reader);
+	return arrow::Status::OK();
+}
+
+arrow::Status ArrowFlightPublisher::FlightServerLight::GetSchema(
+    const arrow::flight::ServerCallContext &context,
+    const arrow::flight::FlightDescriptor &descriptor,
+    std::unique_ptr<arrow::flight::SchemaResult> *schema) {
+
+	if (!publisher_)
+		return arrow::Status::Invalid("publisher_ is null");
+
+	publisher_->logger->log_info("[Flight Publisher] GetSchema for descriptor: "
+	                             + descriptor.ToString());
+
+	auto res = arrow::flight::SchemaResult::Make(*struct_schema_);
+	if (!res.ok()) {
+		return res.status();
+	}
+	*schema = std::move(res).ValueOrDie();
+
 	return arrow::Status::OK();
 }
 
@@ -204,41 +238,36 @@ bool ArrowFlightPublisher::serialize(const Payload &message, void *out) {
 	if (!st.ok())
 		return false;
 
-	if (!builder->doubles_builder || !builder->strings_builder) {
-		return false;
-	}
-
 	// nested payload (only for COMPLEX)
 	if (message.kind == PayloadKind::COMPLEX) {
-		st = builder->doubles_builder->Append();
+		st = builder->doubles_bin_builder.Append(
+		    reinterpret_cast<const uint8_t *>(
+		        message.nested_payload.doubles.data()),
+		    message.nested_payload.double_size);
 		if (!st.ok())
 			return false;
-		auto *doubles_values = static_cast<arrow::DoubleBuilder *>(
-		    builder->doubles_builder->value_builder());
-		const auto &doubles = message.nested_payload.doubles;
-		if (!doubles.empty()) {
-			st = doubles_values->AppendValues(
-			    doubles.data(), static_cast<int64_t>(doubles.size()));
-			if (!st.ok())
-				return false;
+
+		const auto &strings = message.nested_payload.strings;
+		std::string serialized_strings;
+		// Serialize as: [uint16_t len][bytes]...[uint16_t len][bytes]
+		for (const auto &str : strings) {
+			uint16_t str_len = static_cast<uint16_t>(str.size());
+			serialized_strings.append(reinterpret_cast<const char *>(&str_len),
+			                          sizeof(str_len));
+			serialized_strings.append(str);
 		}
 
-		st = builder->strings_builder->Append();
+		st = builder->strings_bin_builder.Append(
+		    reinterpret_cast<const uint8_t *>(serialized_strings.data()),
+		    serialized_strings.size());
 		if (!st.ok())
 			return false;
-		auto *strings_values = static_cast<arrow::StringBuilder *>(
-		    builder->strings_builder->value_builder());
-		const auto &strings = message.nested_payload.strings;
-		if (!strings.empty()) {
-			st = strings_values->AppendValues(strings);
-			if (!st.ok())
-				return false;
-		}
 	} else {
-		st = builder->doubles_builder->AppendNull();
+		st = builder->doubles_bin_builder.AppendNull();
 		if (!st.ok())
 			return false;
-		st = builder->strings_builder->AppendNull();
+
+		st = builder->strings_bin_builder.AppendNull();
 		if (!st.ok())
 			return false;
 	}

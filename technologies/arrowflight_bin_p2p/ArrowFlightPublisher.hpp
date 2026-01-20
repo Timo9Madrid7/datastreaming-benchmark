@@ -38,14 +38,15 @@ class ArrowFlightPublisher : public IPublisher {
 	};
 
   private:
-	const static std::shared_ptr<arrow::Schema> schema_;
+	const static std::shared_ptr<arrow::Schema> data_schema_;
+	const static std::shared_ptr<arrow::Schema> struct_schema_;
 
 	struct BatchBuilder {
 		arrow::StringBuilder message_id_builder;
 		arrow::UInt8Builder kind_builder;
 		arrow::BinaryBuilder data_builder;
-		std::unique_ptr<arrow::ListBuilder> doubles_builder;
-		std::unique_ptr<arrow::ListBuilder> strings_builder;
+		arrow::BinaryBuilder doubles_bin_builder;
+		arrow::BinaryBuilder strings_bin_builder;
 
 		std::deque<std::string> publication_logs;
 
@@ -53,22 +54,14 @@ class ArrowFlightPublisher : public IPublisher {
 		uint64_t byte_size;
 
 		BatchBuilder() : rows(0), byte_size(0) {
-			auto *pool = arrow::default_memory_pool();
-			// schema_: [message_id, kind, bytes, doubles, strings]
-			doubles_builder = std::make_unique<arrow::ListBuilder>(
-			    pool, std::make_shared<arrow::DoubleBuilder>(pool));
-			strings_builder = std::make_unique<arrow::ListBuilder>(
-			    pool, std::make_shared<arrow::StringBuilder>(pool));
 		}
 
 		void reset() {
 			message_id_builder.Reset();
 			kind_builder.Reset();
 			data_builder.Reset();
-			if (doubles_builder)
-				doubles_builder->Reset();
-			if (strings_builder)
-				strings_builder->Reset();
+			doubles_bin_builder.Reset();
+			strings_bin_builder.Reset();
 			publication_logs.clear();
 			rows = 0;
 			byte_size = 0;
@@ -96,19 +89,21 @@ class ArrowFlightPublisher : public IPublisher {
 			if (!status.ok()) {
 				return false;
 			}
-			if (!doubles_builder || !strings_builder)
-				return false;
-			status = doubles_builder->Finish(&doubles_array);
-			if (!status.ok())
-				return false;
-			status = strings_builder->Finish(&strings_array);
-			if (!status.ok())
-				return false;
 
-			batch = arrow::RecordBatch::Make(
-			    schema_, rows,
-			    {message_id_array, kind_array, data_array, doubles_array,
-			     strings_array});
+			status = doubles_bin_builder.Finish(&doubles_array);
+			if (!status.ok()) {
+				return false;
+			}
+
+			status = strings_bin_builder.Finish(&strings_array);
+			if (!status.ok()) {
+				return false;
+			}
+
+			batch = arrow::RecordBatch::Make(data_schema_, rows,
+			                                 {message_id_array, kind_array,
+			                                  data_array, doubles_array,
+			                                  strings_array});
 
 			return true;
 		}
@@ -125,6 +120,11 @@ class ArrowFlightPublisher : public IPublisher {
 		    const arrow::flight::ServerCallContext &context,
 		    const arrow::flight::Ticket &request,
 		    std::unique_ptr<arrow::flight::FlightDataStream> *stream) override;
+
+		arrow::Status GetSchema(
+		    const arrow::flight::ServerCallContext &context,
+		    const arrow::flight::FlightDescriptor &descriptor,
+		    std::unique_ptr<arrow::flight::SchemaResult> *schema) override;
 
 	  private:
 		ArrowFlightPublisher *publisher_;
