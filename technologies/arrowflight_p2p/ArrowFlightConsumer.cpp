@@ -176,11 +176,12 @@ void ArrowFlightConsumer::consume_from_publisher_(const std::string &endpoint,
 		if (!batch)
 			break;
 
-		// [message_id, kind, bytes, doubles, strings]
+		// Expected schema: [message_id, kind, bytes, (optional) doubles,
+		// (optional) strings]
 		if (batch->num_columns() < 3) {
-			logger->log_error("[Flight Consumer] Invalid batch schema: "
-			                  "expected >= 3 columns");
-			break;
+			logger->log_error(
+			    "[Flight Consumer] Invalid batch schema: "
+			    "expected >= 3 columns (message_id, kind, bytes)");
 		}
 
 		auto message_id_column =
@@ -216,7 +217,8 @@ void ArrowFlightConsumer::consume_from_publisher_(const std::string &endpoint,
 			std::string_view data_view = data_column->GetView(i);
 			size_t nested_double_bytes = 0;
 			size_t nested_string_bytes = 0;
-			if (kind == PayloadKind::COMPLEX && doubles_column && strings_column) {
+			if (kind == PayloadKind::COMPLEX && doubles_column
+			    && strings_column) {
 				if (doubles_values && !doubles_column->IsNull(i)) {
 					const int64_t len = doubles_column->value_length(i);
 					nested_double_bytes =
@@ -226,8 +228,8 @@ void ArrowFlightConsumer::consume_from_publisher_(const std::string &endpoint,
 					const int64_t off = strings_column->value_offset(i);
 					const int64_t len = strings_column->value_length(i);
 					if (len > 0) {
-						// Total bytes for this row's strings can be computed using
-						// the underlying StringArray offsets in O(1).
+						// Total bytes for this row's strings can be computed
+						// using the underlying StringArray offsets in O(1).
 						const int64_t start = off;
 						const int64_t end = off + len;
 						nested_string_bytes = static_cast<size_t>(

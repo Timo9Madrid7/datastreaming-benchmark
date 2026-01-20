@@ -23,8 +23,8 @@ const std::shared_ptr<arrow::Schema> ArrowFlightPublisher::schema_ =
         arrow::field("message_id", arrow::utf8()),
         arrow::field("kind", arrow::uint8()),
         arrow::field("bytes", arrow::binary()),
-		arrow::field("doubles", arrow::list(arrow::float64())),
-		arrow::field("strings", arrow::list(arrow::utf8())),
+        arrow::field("doubles", arrow::list(arrow::float64())),
+        arrow::field("strings", arrow::list(arrow::utf8())),
     });
 
 ArrowFlightPublisher::ArrowFlightPublisher(std::shared_ptr<Logger> logger) try
@@ -129,12 +129,14 @@ void ArrowFlightPublisher::initialize() {
 	    utils::get_env_var_or_default("PUBLISHER_ENDPOINT", "0.0.0.0");
 	const std::string port_str =
 	    utils::get_env_var_or_default("PUBLISHER_PORT", "8815");
-	const std::optional<std::string> payload_size_str = utils::get_env_var("PAYLOAD_SIZE");
+	const std::optional<std::string> payload_size_str =
+	    utils::get_env_var("PAYLOAD_SIZE");
 
 	std::string err_msg;
 
 	if (!payload_size_str) {
-		err_msg = "[Flight Publisher] PAYLOAD_SIZE environment variable is not set.";
+		err_msg =
+		    "[Flight Publisher] PAYLOAD_SIZE environment variable is not set.";
 		logger->log_error(err_msg);
 		throw std::runtime_error(err_msg);
 	}
@@ -143,11 +145,14 @@ void ArrowFlightPublisher::initialize() {
 	try {
 		port = std::stoi(port_str);
 		uint64_t payload_size = std::stoull(payload_size_str.value());
-		if (payload_size >= 4 * 1024 * 1024) { // 4 MB
+		if (payload_size >= 4 * 1024 * 1024) {  // 4 MB
 			MAX_BATCH_BYTES = 16 * 1024 * 1024; // 16 MB
+		} else {
+			// For payloads smaller than 4 MB, keep the default MAX_BATCH_BYTES
+			// value (8 MB) set in the constructor.
 		}
 	} catch (...) {
-		err_msg = "[Flight Publisher] Invalid port or MAX_BATCH_BYTES value.";
+		err_msg = "[Flight Publisher] Invalid port or PAYLOAD_SIZE value.";
 		logger->log_error(err_msg);
 		throw std::runtime_error(err_msg);
 	}
@@ -212,8 +217,8 @@ bool ArrowFlightPublisher::serialize(const Payload &message, void *out) {
 		    builder->doubles_builder->value_builder());
 		const auto &doubles = message.nested_payload.doubles;
 		if (!doubles.empty()) {
-			st = doubles_values->AppendValues(doubles.data(),
-			                               static_cast<int64_t>(doubles.size()));
+			st = doubles_values->AppendValues(
+			    doubles.data(), static_cast<int64_t>(doubles.size()));
 			if (!st.ok())
 				return false;
 		}
@@ -223,15 +228,9 @@ bool ArrowFlightPublisher::serialize(const Payload &message, void *out) {
 			return false;
 		auto *strings_values = static_cast<arrow::StringBuilder *>(
 		    builder->strings_builder->value_builder());
-		// Reduce reallocs for typical COMPLEX payload patterns.
-		if (!message.nested_payload.strings.empty()) {
-			(void)strings_values->Reserve(
-			    static_cast<int64_t>(message.nested_payload.strings.size()));
-			(void)strings_values->ReserveData(
-			    static_cast<int64_t>(message.nested_payload.string_size));
-		}
-		for (const auto &s : message.nested_payload.strings) {
-			st = strings_values->Append(s);
+		const auto &strings = message.nested_payload.strings;
+		if (!strings.empty()) {
+			st = strings_values->AppendValues(strings);
 			if (!st.ok())
 				return false;
 		}
@@ -307,8 +306,8 @@ void ArrowFlightPublisher::log_configuration() {
 	    + utils::get_env_var_or_default("PUBLISHER_ENDPOINT", "0.0.0.0"));
 	logger->log_info("[CONFIG] PUBLISHER_PORT: "
 	                 + utils::get_env_var_or_default("PUBLISHER_PORT", "8815"));
-	logger->log_info(
-	    "[CONFIG] MAX_BATCH_BYTES: " + std::to_string(MAX_BATCH_BYTES));
+	logger->log_info("[CONFIG] MAX_BATCH_BYTES: "
+	                 + std::to_string(MAX_BATCH_BYTES));
 	logger->log_info("[CONFIG] TOPICS: "
 	                 + utils::get_env_var_or_default("TOPICS", ""));
 	logger->log_config("[Flight Publisher] [CONFIG_END]");
