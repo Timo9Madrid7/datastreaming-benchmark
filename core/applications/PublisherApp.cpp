@@ -36,7 +36,7 @@ const Payload &PublisherApp::pick_random_payload() {
 	return payloads[index];
 }
 
-PublisherApp::PublisherApp(Logger::LogLevel log_level) {
+PublisherApp::PublisherApp(Logger::LogLevel log_level) : enable_rate_limiter(false) {
 	logger = std::make_shared<Logger>(log_level);
 	load_from_env();
 	// Default: 200 MiB/s. Can be overridden via MAX_SEND_RATE_MBPS.
@@ -62,6 +62,7 @@ PublisherApp::PublisherApp(Logger::LogLevel log_level) {
 	} catch (...) {
 		logger->log_error("[PublisherApp] Invalid MAX_SEND_RATE_MBPS='"
 		                  + env_rate_mbps + "', using default 200MiB/s");
+		enable_rate_limiter = false; // disable on error
 	}
 	generate_payloads(payload_size, payload_samples);
 }
