@@ -62,6 +62,39 @@ inline size_t compute_strings_payload_bytes(std::string_view wire) noexcept {
 	return total;
 }
 
+inline size_t materialize_strings_from_wire(std::string_view wire,
+                                           std::vector<std::string> &out) {
+	// Wire format: [u16 len][bytes] repeated.
+	out.clear();
+	size_t off = 0;
+	size_t total = 0;
+	while (off + sizeof(uint16_t) <= static_cast<size_t>(wire.size())) {
+		uint16_t str_len = 0;
+		std::memcpy(&str_len, wire.data() + off, sizeof(uint16_t));
+		off += sizeof(uint16_t);
+		const size_t sl = static_cast<size_t>(str_len);
+		if (off + sl > static_cast<size_t>(wire.size())) {
+			break;
+		}
+
+		out.emplace_back(wire.substr(off, sl));
+		off += sl;
+		total += sl;
+	}
+	return total;
+}
+
+inline size_t materialize_doubles_from_wire(std::string_view wire,
+                                           std::vector<double> &out) {
+	const size_t bytes = static_cast<size_t>(wire.size());
+	const size_t count = bytes / sizeof(double);
+	out.resize(count);
+	if (count > 0) {
+		std::memcpy(out.data(), wire.data(), count * sizeof(double));
+	}
+	return count * sizeof(double);
+}
+
 class AsyncBatchDecoder {
   public:
 	AsyncBatchDecoder(std::shared_ptr<Logger> logger, std::string ticket,
@@ -100,34 +133,67 @@ class AsyncBatchDecoder {
 				continue;
 			}
 
-			// Decode & compute sizes.
-			auto message_id_len = item.message_id.size();
+			// Decode (materialize) + compute sizes.
+			Payload payload;
+			payload.message_id = item.message_id;
+			payload.kind = static_cast<PayloadKind>(item.kind);
+
+			const size_t message_id_len = payload.message_id.size();
 			size_t payload_bytes_len = 0;
 			size_t nested_double_bytes = 0;
 			size_t nested_string_bytes = 0;
 
-			// Pull only the columns we need.
-			auto kind = static_cast<PayloadKind>(item.kind);
+			// bytes (always present)
 			auto bytes_col = std::static_pointer_cast<arrow::BinaryArray>(
 			    item.batch->column(2));
-			payload_bytes_len =
-			    static_cast<size_t>(bytes_col->value_length(item.row));
+			if (!bytes_col->IsNull(item.row)) {
+				const auto view = bytes_col->GetView(item.row);
+				payload_bytes_len = static_cast<size_t>(view.size());
+				payload.byte_size = payload_bytes_len;
+				payload.bytes.resize(payload_bytes_len);
+				if (payload_bytes_len > 0) {
+					std::memcpy(payload.bytes.data(), view.data(), payload_bytes_len);
+				}
+			} else {
+				payload.byte_size = 0;
+				payload.bytes.clear();
+			}
 
-			if (kind == PayloadKind::COMPLEX) {
+			// nested payload for COMPLEX
+			if (payload.kind == PayloadKind::COMPLEX) {
 				auto doubles_col = std::static_pointer_cast<arrow::BinaryArray>(
 				    item.batch->column(3));
 				auto strings_col = std::static_pointer_cast<arrow::BinaryArray>(
 				    item.batch->column(4));
+
 				if (!doubles_col->IsNull(item.row)) {
-					nested_double_bytes = static_cast<size_t>(
-					    doubles_col->value_length(item.row));
+					const auto view = doubles_col->GetView(item.row);
+					nested_double_bytes = materialize_doubles_from_wire(
+					    view, payload.nested_payload.doubles);
+					payload.nested_payload.double_size = nested_double_bytes;
+				} else {
+					payload.nested_payload.doubles.clear();
+					payload.nested_payload.double_size = 0;
 				}
+
 				if (!strings_col->IsNull(item.row)) {
-					const std::string_view wire =
-					    strings_col->GetView(item.row);
-					nested_string_bytes = compute_strings_payload_bytes(wire);
+					const auto view = strings_col->GetView(item.row);
+					nested_string_bytes = materialize_strings_from_wire(
+					    view, payload.nested_payload.strings);
+					payload.nested_payload.string_size = nested_string_bytes;
+				} else {
+					payload.nested_payload.strings.clear();
+					payload.nested_payload.string_size = 0;
 				}
+			} else {
+				payload.nested_payload.doubles.clear();
+				payload.nested_payload.strings.clear();
+				payload.nested_payload.double_size = 0;
+				payload.nested_payload.string_size = 0;
 			}
+
+			payload.data_size = payload.byte_size + payload.nested_payload.double_size
+			                  + payload.nested_payload.string_size;
 
 			const size_t logical_size =
 			    payload_bytes_len + nested_double_bytes + nested_string_bytes;
