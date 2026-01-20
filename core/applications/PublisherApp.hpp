@@ -23,6 +23,7 @@ class PublisherApp {
 	std::vector<Payload> payloads;
 
 	std::shared_ptr<Logger> logger;
+	bool enable_rate_limiter;
 	utils::RateLimiter rate_limiter;
 
 	std::unique_ptr<IPublisher> publisher;
