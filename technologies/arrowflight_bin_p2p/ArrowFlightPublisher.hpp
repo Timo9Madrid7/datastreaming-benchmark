@@ -48,7 +48,15 @@ class ArrowFlightPublisher : public IPublisher {
 		arrow::BinaryBuilder doubles_bin_builder;
 		arrow::BinaryBuilder strings_bin_builder;
 
-		std::deque<std::string> publication_logs;
+		// nested strings scratch space/buffer
+		std::string strings_wire_scratch;
+
+		struct PublicationLogEntry {
+			std::string message_id;
+			size_t data_size;
+			size_t row_size;
+		};
+		std::vector<PublicationLogEntry> publication_logs;
 
 		uint64_t rows;
 		uint64_t byte_size;
@@ -62,6 +70,7 @@ class ArrowFlightPublisher : public IPublisher {
 			data_builder.Reset();
 			doubles_bin_builder.Reset();
 			strings_bin_builder.Reset();
+			strings_wire_scratch.clear();
 			publication_logs.clear();
 			rows = 0;
 			byte_size = 0;

@@ -32,12 +32,16 @@
 
 namespace {
 
-struct DecodeItem {
-	std::shared_ptr<arrow::RecordBatch> batch;
+struct DecodeRowMeta {
 	int64_t row = 0;
 	std::string message_id;
 	uint8_t kind = 0;
 	bool is_termination = false;
+};
+
+struct DecodeItem {
+	std::shared_ptr<arrow::RecordBatch> batch;
+	std::vector<DecodeRowMeta> rows;
 };
 
 inline size_t compute_strings_payload_bytes(std::string_view wire) noexcept {
@@ -120,98 +124,103 @@ class AsyncBatchDecoder {
 	}
 
 	bool enqueue(DecodeItem item) {
+		// enqueue() only fails on allocation failure.
 		return queue_.enqueue(std::move(item));
 	}
 
   private:
 	void run_() {
 		using namespace std::chrono_literals;
+		Payload payload;
 		while (!stop_requested_.load(std::memory_order_acquire)
 		       || queue_.size_approx() > 0) {
 			DecodeItem item;
-			if (!queue_.wait_dequeue_timed(item, 500ns)) {
+			if (!queue_.wait_dequeue_timed(item, 50us)) {
 				continue;
 			}
 
-			// Decode (materialize) + compute sizes.
-			Payload payload;
-			payload.message_id = item.message_id;
-			payload.kind = static_cast<PayloadKind>(item.kind);
-
-			const size_t message_id_len = payload.message_id.size();
-			size_t payload_bytes_len = 0;
-			size_t nested_double_bytes = 0;
-			size_t nested_string_bytes = 0;
-
-			// bytes (always present)
+			// Pre-cast arrays once per batch.
 			auto bytes_col = std::static_pointer_cast<arrow::BinaryArray>(
 			    item.batch->column(2));
-			if (!bytes_col->IsNull(item.row)) {
-				const auto view = bytes_col->GetView(item.row);
-				payload_bytes_len = static_cast<size_t>(view.size());
-				payload.byte_size = payload_bytes_len;
-				payload.bytes.resize(payload_bytes_len);
-				if (payload_bytes_len > 0) {
-					std::memcpy(payload.bytes.data(), view.data(), payload_bytes_len);
+			auto doubles_col = std::static_pointer_cast<arrow::BinaryArray>(
+			    item.batch->column(3));
+			auto strings_col = std::static_pointer_cast<arrow::BinaryArray>(
+			    item.batch->column(4));
+
+			for (auto &row : item.rows) {
+				// Decode (materialize) + compute sizes.
+				payload.message_id = std::move(row.message_id);
+				payload.kind = static_cast<PayloadKind>(row.kind);
+
+				const size_t message_id_len = payload.message_id.size();
+				size_t payload_bytes_len = 0;
+				size_t nested_double_bytes = 0;
+				size_t nested_string_bytes = 0;
+
+				// bytes (always present)
+				if (!bytes_col->IsNull(row.row)) {
+					const auto view = bytes_col->GetView(row.row);
+					payload_bytes_len = static_cast<size_t>(view.size());
+					payload.byte_size = payload_bytes_len;
+					payload.bytes.resize(payload_bytes_len);
+					if (payload_bytes_len > 0) {
+						std::memcpy(payload.bytes.data(), view.data(), payload_bytes_len);
+					}
+				} else {
+					payload.byte_size = 0;
+					payload.bytes.clear();
 				}
-			} else {
-				payload.byte_size = 0;
-				payload.bytes.clear();
-			}
 
-			// nested payload for COMPLEX
-			if (payload.kind == PayloadKind::COMPLEX) {
-				auto doubles_col = std::static_pointer_cast<arrow::BinaryArray>(
-				    item.batch->column(3));
-				auto strings_col = std::static_pointer_cast<arrow::BinaryArray>(
-				    item.batch->column(4));
+				// nested payload for COMPLEX
+				if (payload.kind == PayloadKind::COMPLEX) {
+					if (!doubles_col->IsNull(row.row)) {
+						const auto view = doubles_col->GetView(row.row);
+						nested_double_bytes = materialize_doubles_from_wire(
+						    view, payload.nested_payload.doubles);
+						payload.nested_payload.double_size = nested_double_bytes;
+					} else {
+						payload.nested_payload.doubles.clear();
+						payload.nested_payload.double_size = 0;
+					}
 
-				if (!doubles_col->IsNull(item.row)) {
-					const auto view = doubles_col->GetView(item.row);
-					nested_double_bytes = materialize_doubles_from_wire(
-					    view, payload.nested_payload.doubles);
-					payload.nested_payload.double_size = nested_double_bytes;
+					if (!strings_col->IsNull(row.row)) {
+						const auto view = strings_col->GetView(row.row);
+						nested_string_bytes = materialize_strings_from_wire(
+						    view, payload.nested_payload.strings);
+						payload.nested_payload.string_size = nested_string_bytes;
+					} else {
+						payload.nested_payload.strings.clear();
+						payload.nested_payload.string_size = 0;
+					}
 				} else {
 					payload.nested_payload.doubles.clear();
-					payload.nested_payload.double_size = 0;
-				}
-
-				if (!strings_col->IsNull(item.row)) {
-					const auto view = strings_col->GetView(item.row);
-					nested_string_bytes = materialize_strings_from_wire(
-					    view, payload.nested_payload.strings);
-					payload.nested_payload.string_size = nested_string_bytes;
-				} else {
 					payload.nested_payload.strings.clear();
+					payload.nested_payload.double_size = 0;
 					payload.nested_payload.string_size = 0;
 				}
-			} else {
-				payload.nested_payload.doubles.clear();
-				payload.nested_payload.strings.clear();
-				payload.nested_payload.double_size = 0;
-				payload.nested_payload.string_size = 0;
-			}
 
-			payload.data_size = payload.byte_size + payload.nested_payload.double_size
-			                  + payload.nested_payload.string_size;
+				payload.data_size = payload.byte_size
+				                  + payload.nested_payload.double_size
+				                  + payload.nested_payload.string_size;
 
-			const size_t logical_size =
-			    payload_bytes_len + nested_double_bytes + nested_string_bytes;
-			const size_t serialized_size = message_id_len + sizeof(uint8_t)
-			    + payload_bytes_len + nested_double_bytes + nested_string_bytes;
+				const size_t logical_size =
+				    payload_bytes_len + nested_double_bytes + nested_string_bytes;
+				const size_t serialized_size = message_id_len + sizeof(uint8_t)
+				    + payload_bytes_len + nested_double_bytes + nested_string_bytes;
 
-			if (logger_) {
-				logger_->log_study("Deserialized," + item.message_id + ","
-				                   + ticket_ + ","
-				                   + std::to_string(logical_size) + ","
-				                   + std::to_string(serialized_size));
-			}
-
-			if (item.is_termination) {
-				if (on_termination_) {
-					on_termination_();
+				if (logger_) {
+					logger_->log_study("Deserialized," + payload.message_id + ","
+					                   + ticket_ + ","
+					                   + std::to_string(logical_size) + ","
+					                   + std::to_string(serialized_size));
 				}
-				return;
+
+				if (row.is_termination) {
+					if (on_termination_) {
+						on_termination_();
+					}
+					return;
+				}
 			}
 		}
 	}
@@ -432,28 +441,35 @@ void ArrowFlightConsumer::consume_from_publisher_(const std::string &endpoint,
 		auto kind_column =
 		    std::static_pointer_cast<arrow::UInt8Array>(batch->column(1));
 
+		DecodeItem item;
+		item.batch = batch;
+		item.rows.reserve(static_cast<size_t>(batch->num_rows()));
+
 		for (int64_t i = 0; i < batch->num_rows(); ++i) {
-			DecodeItem item;
-			item.batch = batch;
-			item.row = i;
-			item.message_id = message_id_column->GetString(i);
-			item.kind = kind_column->Value(i);
+			DecodeRowMeta meta;
+			meta.row = i;
+			meta.message_id = message_id_column->GetString(i);
+			meta.kind = kind_column->Value(i);
 
-			logger->log_study("Reception," + item.message_id + "," + ticket);
+			logger->log_study("Reception," + meta.message_id + "," + ticket);
 
-			if (item.message_id.find(TERMINATION_SIGNAL) != std::string::npos) {
+			if (meta.message_id.find(TERMINATION_SIGNAL) != std::string::npos) {
 				logger->log_info(
 				    "[Flight Consumer] Received termination for ticket="
 				    + ticket + " from publisher=" + endpoint);
-				item.is_termination = true;
+				meta.is_termination = true;
 				saw_termination = true;
+				item.rows.emplace_back(std::move(meta));
 				decoder.enqueue(std::move(item));
 				break;
 			}
+
+			item.rows.emplace_back(std::move(meta));
 		}
 		if (saw_termination) {
 			break;
 		}
+		decoder.enqueue(std::move(item));
 	}
 
 	decoder.request_stop();

@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <exception>
 #include <memory>
 #include <optional>
@@ -243,23 +244,31 @@ bool ArrowFlightPublisher::serialize(const Payload &message, void *out) {
 		st = builder->doubles_bin_builder.Append(
 		    reinterpret_cast<const uint8_t *>(
 		        message.nested_payload.doubles.data()),
-		    message.nested_payload.double_size);
+		    static_cast<int64_t>(message.nested_payload.double_size));
 		if (!st.ok())
 			return false;
 
 		const auto &strings = message.nested_payload.strings;
-		std::string serialized_strings;
 		// Serialize as: [uint16_t len][bytes]...[uint16_t len][bytes]
+		// Reuse a scratch buffer to avoid per-message allocations.
+		const size_t total_string_bytes = message.nested_payload.string_size;
+		const size_t header_bytes = strings.size() * sizeof(uint16_t);
+		builder->strings_wire_scratch.clear();
+		builder->strings_wire_scratch.resize(header_bytes + total_string_bytes);
+		char *dst = builder->strings_wire_scratch.data();
 		for (const auto &str : strings) {
-			uint16_t str_len = static_cast<uint16_t>(str.size());
-			serialized_strings.append(reinterpret_cast<const char *>(&str_len),
-			                          sizeof(str_len));
-			serialized_strings.append(str);
+			const uint16_t str_len = static_cast<uint16_t>(str.size());
+			std::memcpy(dst, &str_len, sizeof(str_len));
+			dst += sizeof(str_len);
+			if (str_len > 0) {
+				std::memcpy(dst, str.data(), str_len);
+				dst += str_len;
+			}
 		}
 
 		st = builder->strings_bin_builder.Append(
-		    reinterpret_cast<const uint8_t *>(serialized_strings.data()),
-		    serialized_strings.size());
+		    reinterpret_cast<const uint8_t *>(builder->strings_wire_scratch.data()),
+		    static_cast<int64_t>(builder->strings_wire_scratch.size()));
 		if (!st.ok())
 			return false;
 	} else {
@@ -302,9 +311,7 @@ void ArrowFlightPublisher::send_message(const Payload &message,
 	               + message.nested_payload.string_size
 	           : 0);
 
-	bb.publication_logs.push_back(
-	    "Publication," + message.message_id + "," + ticket + ","
-	    + std::to_string(message.data_size) + "," + std::to_string(row_size));
+	bb.publication_logs.push_back({message.message_id, message.data_size, row_size});
 
 	const bool flush = (bb.byte_size >= MAX_BATCH_BYTES)
 	    || (message.kind == PayloadKind::TERMINATION);
@@ -321,8 +328,10 @@ void ArrowFlightPublisher::send_message(const Payload &message,
 
 	const bool is_term = (message.kind == PayloadKind::TERMINATION);
 	enqueue_batch_(ticket, batch, is_term);
-	for (const auto &log_entry : bb.publication_logs) {
-		logger->log_study(log_entry);
+	for (const auto &entry : bb.publication_logs) {
+		logger->log_study("Publication," + entry.message_id + "," + ticket + ","
+		                  + std::to_string(entry.data_size) + ","
+		                  + std::to_string(entry.row_size));
 	}
 
 	bb.reset();
