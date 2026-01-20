@@ -6,12 +6,12 @@
 
 extern "C" void register_technology(std::shared_ptr<Logger> logger) {
 	Factory<IPublisher>::registerClient(
-	    "arrowflight_p2p",
+	    "arrowflight_bin_p2p",
 	    [](std::shared_ptr<Logger> logger) -> std::unique_ptr<IPublisher> {
 		    return std::make_unique<ArrowFlightPublisher>(logger);
 	    });
 	Factory<IConsumer>::registerClient(
-	    "arrowflight_p2p",
+	    "arrowflight_bin_p2p",
 	    [](std::shared_ptr<Logger> logger) -> std::unique_ptr<IConsumer> {
 		    return std::make_unique<ArrowFlightConsumer>(logger);
 	    });

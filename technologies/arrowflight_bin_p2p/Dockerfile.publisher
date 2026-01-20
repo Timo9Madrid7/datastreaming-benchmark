@@ -1,5 +1,5 @@
 # Arrow Flight C++ Publisher Dockerfile
-FROM arrowflight_p2p_base
+FROM arrowflight_bin_p2p_base
 
 # Set working directory
 WORKDIR /app/build/core/applications

@@ -1,4 +1,4 @@
-# Expected name: arrowflight_p2p_base
+# Expected name: arrowflight_bin_p2p_base
 # Arrow Flight C++ Base Dockerfile
 FROM core_base
 
@@ -18,8 +18,8 @@ RUN apt-get update \
     protobuf-compiler-grpc \
     && rm -rf /var/lib/apt/lists/*
 
-RUN mkdir -p /app/technologies/arrowflight_p2p
-COPY ./technologies/arrowflight_p2p /app/technologies/arrowflight_p2p
+RUN mkdir -p /app/technologies/arrowflight_bin_p2p
+COPY ./technologies/arrowflight_bin_p2p /app/technologies/arrowflight_bin_p2p
 
 # Build the arrow-flight-specific library
 RUN set -eux; \
@@ -38,4 +38,4 @@ RUN set -eux; \
     cmake --build .
 
 # Move shared lib into /app/lib
-RUN mkdir -p /app/lib && cp /app/build/technologies/arrowflight_p2p/libarrowflight_p2p_technology.so /app/lib/
+RUN mkdir -p /app/lib && cp /app/build/technologies/arrowflight_bin_p2p/libarrowflight_bin_p2p_technology.so /app/lib/
