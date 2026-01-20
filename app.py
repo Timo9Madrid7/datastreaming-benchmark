@@ -1,8 +1,15 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import polars as pl
 import streamlit as st
-from analysis.data_loader import discover_scenarios, infer_duration_seconds_from_logs
+from analysis.data_loader import (
+    DEFAULT_LOGS_ROOT,
+    discover_log_roots,
+    discover_scenarios,
+    infer_duration_seconds_from_logs,
+)
 from analysis.metrics import (
     average_curve,
     average_latency,
@@ -17,8 +24,8 @@ st.set_page_config(page_title="Benchmark Analysis", layout="wide")
 
 
 @st.cache_data(show_spinner=False)
-def load_scenarios() -> dict[str, dict[str, list[str]]]:
-    return discover_scenarios()
+def load_scenarios(logs_root: str) -> dict[str, dict[str, list[str]]]:
+    return discover_scenarios(logs_root)
 
 
 @st.cache_data(show_spinner=False)
@@ -28,8 +35,9 @@ def load_throughput(
     run: str,
     window_s: int,
     event_type: str,
+    logs_root: str,
 ) -> pl.DataFrame:
-    return throughput_for_run(scenario, tech, run, window_s, event_type)
+    return throughput_for_run(scenario, tech, run, window_s, event_type, logs_root=logs_root)
 
 
 @st.cache_data(show_spinner=False)
@@ -37,31 +45,45 @@ def load_latency_stats(
     scenario: str,
     tech: str,
     run: str,
+    logs_root: str,
 ) -> pl.DataFrame:
-    return latency_stats_for_run(scenario, tech, run)
+    return latency_stats_for_run(scenario, tech, run, logs_root=logs_root)
 
 
 @st.cache_data(show_spinner=False)
-def load_latency_samples(scenario: str, tech: str, run: str) -> pl.DataFrame:
-    return latency_samples_for_run(scenario, tech, run)
+def load_latency_samples(scenario: str, tech: str, run: str, logs_root: str) -> pl.DataFrame:
+    return latency_samples_for_run(scenario, tech, run, logs_root=logs_root)
 
 
 @st.cache_data(show_spinner=False)
-def load_resources(scenario: str, tech: str, run: str) -> pl.DataFrame:
-    return resource_usage_for_run(scenario, tech, run)
+def load_resources(scenario: str, tech: str, run: str, logs_root: str) -> pl.DataFrame:
+    return resource_usage_for_run(scenario, tech, run, logs_root=logs_root)
 
 
 def main() -> None:
     st.title("Streaming Benchmark Analysis")
 
+    # Sidebar (top-level): select which experiment log directory to analyze.
+    base_dir = Path(__file__).resolve().parent
+    log_roots = discover_log_roots(base_dir=base_dir)
+    default_index = (
+        log_roots.index(DEFAULT_LOGS_ROOT) if DEFAULT_LOGS_ROOT in log_roots else 0
+    )
+    logs_root = st.sidebar.selectbox(
+        "Experiment directory",
+        log_roots,
+        index=default_index,
+        help="Choose which logs* folder to analyze (e.g., logs_FLAT_latest).",
+    )
+
     # scenarios structure: {scenario: {tech: [run1, run2, ...], ...}, ...}
-    scenarios = load_scenarios()
+    scenarios = load_scenarios(logs_root)
     if not scenarios:
-        st.info("No scenarios found under logs/.")
+        st.info(f"No scenarios found under {logs_root}/.")
         return
     scenario = st.sidebar.selectbox("Scenario", sorted(scenarios.keys()))
 
-    duration_s = infer_duration_seconds_from_logs(scenario)
+    duration_s = infer_duration_seconds_from_logs(scenario, logs_root=logs_root)
     if duration_s is None:
         st.sidebar.caption("Duration inferred from logs: unknown")
     else:
@@ -113,9 +135,9 @@ def main() -> None:
 
     def _latency_stats_with_offset(scenario: str, tech: str, run: str) -> pl.DataFrame:
         if start_offset_s == 0 and end_offset_s == 0:
-            return load_latency_stats(scenario, tech, run)
+            return load_latency_stats(scenario, tech, run, logs_root)
 
-        samples = load_latency_samples(scenario, tech, run)
+        samples = load_latency_samples(scenario, tech, run, logs_root)
         if samples.is_empty():
             return pl.DataFrame()
 
@@ -208,6 +230,7 @@ def main() -> None:
                     run,
                     window_s,
                     event_type,
+                    logs_root,
                 )
                 throughput = _trim_throughput_window(throughput)
                 if not throughput.is_empty():
@@ -219,7 +242,7 @@ def main() -> None:
             latency_stats = _latency_stats_with_offset(scenario, tech, run)
             if not latency_stats.is_empty():
                 latency_stats_frames.append(latency_stats)
-            resources = load_resources(scenario, tech, run)
+            resources = load_resources(scenario, tech, run, logs_root)
             if not resources.is_empty():
                 cpu_runs.append(
                     resources.select(["time_s", "cpu_usage_perc"]).with_columns(
@@ -355,6 +378,7 @@ def main() -> None:
                             run,
                             window_s,
                             event_type,
+                            logs_root,
                         )
                     ).with_columns(
                         pl.lit(tech).alias("tech"), pl.lit(run).alias("run")
@@ -437,7 +461,7 @@ def main() -> None:
             for run in runs_by_tech.get(tech, []):
                 if run not in selected_runs:
                     continue
-                resources = load_resources(scenario, tech, run)
+                resources = load_resources(scenario, tech, run, logs_root)
                 if resources.is_empty():
                     continue
                 cpu_display = pl.concat(

@@ -14,7 +14,40 @@ class RunSpec:
 
 
 SCENARIO_DURATION_RE = re.compile(r"(?P<duration>\d+)s(?:$|[^0-9A-Za-z])")
-PATH = "logs"
+LOGS_ROOT_GLOB = "logs*"
+DEFAULT_LOGS_ROOT = "logs"
+
+# Backwards-compatible default used across analysis code.
+PATH = DEFAULT_LOGS_ROOT
+
+
+def discover_log_roots(
+    base_dir: str | Path = ".",
+    pattern: str = LOGS_ROOT_GLOB,
+) -> list[str]:
+    """Discover available experiment log roots (directories) under `base_dir`.
+
+    Typical examples: logs/, logs_FLAT_latest/, logs_COMPLEX_v0/, ...
+    """
+    base = Path(base_dir)
+    if not base.exists():
+        return [DEFAULT_LOGS_ROOT]
+
+    roots = sorted(
+        {
+            p.name
+            for p in base.glob(pattern)
+            if p.is_dir() and not p.name.startswith(".")
+        }
+    )
+
+    # Prefer the conventional default if present.
+    if DEFAULT_LOGS_ROOT in roots:
+        return roots
+    if (base / DEFAULT_LOGS_ROOT).is_dir():
+        return [DEFAULT_LOGS_ROOT, *roots]
+
+    return roots or [DEFAULT_LOGS_ROOT]
 
 def infer_duration_seconds_from_logs(
     scenario: str, logs_root: str | Path = PATH
