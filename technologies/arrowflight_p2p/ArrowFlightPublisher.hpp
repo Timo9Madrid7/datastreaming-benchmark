@@ -44,7 +44,8 @@ class ArrowFlightPublisher : public IPublisher {
 		arrow::StringBuilder message_id_builder;
 		arrow::UInt8Builder kind_builder;
 		arrow::BinaryBuilder data_builder;
-		std::unique_ptr<arrow::StructBuilder> nested_builder;
+		std::unique_ptr<arrow::ListBuilder> doubles_builder;
+		std::unique_ptr<arrow::ListBuilder> strings_builder;
 
 		std::deque<std::string> publication_logs;
 
@@ -53,25 +54,21 @@ class ArrowFlightPublisher : public IPublisher {
 
 		BatchBuilder() : rows(0), byte_size(0) {
 			auto *pool = arrow::default_memory_pool();
-			// schema_: [message_id, kind, bytes, nested]
-			const auto nested_type = ArrowFlightPublisher::schema_->field(3)->type();
-			std::vector<std::shared_ptr<arrow::ArrayBuilder>> children;
-			children.reserve(2);
-			children.push_back(std::make_shared<arrow::ListBuilder>(
-			    pool, std::make_shared<arrow::DoubleBuilder>(pool)));
-			children.push_back(std::make_shared<arrow::ListBuilder>(
-			    pool, std::make_shared<arrow::StringBuilder>(pool)));
-			nested_builder = std::make_unique<arrow::StructBuilder>(
-			    nested_type, pool, std::move(children));
+			// schema_: [message_id, kind, bytes, doubles, strings]
+			doubles_builder = std::make_unique<arrow::ListBuilder>(
+			    pool, std::make_shared<arrow::DoubleBuilder>(pool));
+			strings_builder = std::make_unique<arrow::ListBuilder>(
+			    pool, std::make_shared<arrow::StringBuilder>(pool));
 		}
 
 		void reset() {
 			message_id_builder.Reset();
 			kind_builder.Reset();
 			data_builder.Reset();
-			if (nested_builder) {
-				nested_builder->Reset();
-			}
+			if (doubles_builder)
+				doubles_builder->Reset();
+			if (strings_builder)
+				strings_builder->Reset();
 			publication_logs.clear();
 			rows = 0;
 			byte_size = 0;
@@ -81,7 +78,8 @@ class ArrowFlightPublisher : public IPublisher {
 			std::shared_ptr<arrow::Array> message_id_array;
 			std::shared_ptr<arrow::Array> kind_array;
 			std::shared_ptr<arrow::Array> data_array;
-			std::shared_ptr<arrow::Array> nested_array;
+			std::shared_ptr<arrow::Array> doubles_array;
+			std::shared_ptr<arrow::Array> strings_array;
 			arrow::Status status;
 
 			status = message_id_builder.Finish(&message_id_array);
@@ -98,18 +96,19 @@ class ArrowFlightPublisher : public IPublisher {
 			if (!status.ok()) {
 				return false;
 			}
-
-			if (!nested_builder) {
+			if (!doubles_builder || !strings_builder)
 				return false;
-			}
-			status = nested_builder->Finish(&nested_array);
-			if (!status.ok()) {
+			status = doubles_builder->Finish(&doubles_array);
+			if (!status.ok())
 				return false;
-			}
+			status = strings_builder->Finish(&strings_array);
+			if (!status.ok())
+				return false;
 
 			batch = arrow::RecordBatch::Make(
 			    schema_, rows,
-			    {message_id_array, kind_array, data_array, nested_array});
+			    {message_id_array, kind_array, data_array, doubles_array,
+			     strings_array});
 
 			return true;
 		}

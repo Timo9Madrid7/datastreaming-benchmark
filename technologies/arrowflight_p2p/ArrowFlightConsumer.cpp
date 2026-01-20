@@ -176,11 +176,12 @@ void ArrowFlightConsumer::consume_from_publisher_(const std::string &endpoint,
 		if (!batch)
 			break;
 
-		// [message_id, kind, data]
+		// Expected schema: [message_id, kind, bytes, (optional) doubles,
+		// (optional) strings]
 		if (batch->num_columns() < 3) {
-			logger->log_error("[Flight Consumer] Invalid batch schema: "
-			                  "expected >= 3 columns");
-			break;
+			logger->log_error(
+			    "[Flight Consumer] Invalid batch schema: "
+			    "expected >= 3 columns (message_id, kind, bytes)");
 		}
 
 		auto message_id_column =
@@ -190,29 +191,22 @@ void ArrowFlightConsumer::consume_from_publisher_(const std::string &endpoint,
 		auto data_column =
 		    std::static_pointer_cast<arrow::BinaryArray>(batch->column(2));
 
-		std::shared_ptr<arrow::StructArray> nested_column;
-		std::shared_ptr<arrow::ListArray> nested_doubles;
-		std::shared_ptr<arrow::ListArray> nested_strings;
-		std::shared_ptr<arrow::DoubleArray> nested_doubles_values;
-		std::shared_ptr<arrow::StringArray> nested_strings_values;
-		if (batch->num_columns() >= 4) { // kind=COMPLEX has nested payload
-			nested_column =
-			    std::static_pointer_cast<arrow::StructArray>(batch->column(3));
-			if (nested_column && nested_column->num_fields() >= 2) {
-				nested_doubles = std::static_pointer_cast<arrow::ListArray>(
-				    nested_column->field(0));
-				nested_strings = std::static_pointer_cast<arrow::ListArray>(
-				    nested_column->field(1));
-				if (nested_doubles) {
-					nested_doubles_values =
-					    std::static_pointer_cast<arrow::DoubleArray>(
-					        nested_doubles->values());
-				}
-				if (nested_strings) {
-					nested_strings_values =
-					    std::static_pointer_cast<arrow::StringArray>(
-					        nested_strings->values());
-				}
+		std::shared_ptr<arrow::ListArray> doubles_column;
+		std::shared_ptr<arrow::ListArray> strings_column;
+		std::shared_ptr<arrow::DoubleArray> doubles_values;
+		std::shared_ptr<arrow::StringArray> strings_values;
+		if (batch->num_columns() >= 5) { // kind=COMPLEX has nested payload
+			doubles_column =
+			    std::static_pointer_cast<arrow::ListArray>(batch->column(3));
+			strings_column =
+			    std::static_pointer_cast<arrow::ListArray>(batch->column(4));
+			if (doubles_column) {
+				doubles_values = std::static_pointer_cast<arrow::DoubleArray>(
+				    doubles_column->values());
+			}
+			if (strings_column) {
+				strings_values = std::static_pointer_cast<arrow::StringArray>(
+				    strings_column->values());
 			}
 		}
 
@@ -223,21 +217,24 @@ void ArrowFlightConsumer::consume_from_publisher_(const std::string &endpoint,
 			std::string_view data_view = data_column->GetView(i);
 			size_t nested_double_bytes = 0;
 			size_t nested_string_bytes = 0;
-			if (kind == PayloadKind::COMPLEX && nested_column
-			    && !nested_column->IsNull(i)) {
-				if (nested_doubles && nested_doubles_values
-				    && !nested_doubles->IsNull(i)) {
-					const int64_t len = nested_doubles->value_length(i);
+			if (kind == PayloadKind::COMPLEX && doubles_column
+			    && strings_column) {
+				if (doubles_values && !doubles_column->IsNull(i)) {
+					const int64_t len = doubles_column->value_length(i);
 					nested_double_bytes =
 					    static_cast<size_t>(len) * sizeof(double);
 				}
-				if (nested_strings && nested_strings_values
-				    && !nested_strings->IsNull(i)) {
-					const int64_t off = nested_strings->value_offset(i);
-					const int64_t len = nested_strings->value_length(i);
-					for (int64_t j = 0; j < len; ++j) {
-						nested_string_bytes += static_cast<size_t>(
-						    nested_strings_values->value_length(off + j));
+				if (strings_values && !strings_column->IsNull(i)) {
+					const int64_t off = strings_column->value_offset(i);
+					const int64_t len = strings_column->value_length(i);
+					if (len > 0) {
+						// Total bytes for this row's strings can be computed
+						// using the underlying StringArray offsets in O(1).
+						const int64_t start = off;
+						const int64_t end = off + len;
+						nested_string_bytes = static_cast<size_t>(
+						    strings_values->value_offset(end)
+						    - strings_values->value_offset(start));
 					}
 				}
 			}

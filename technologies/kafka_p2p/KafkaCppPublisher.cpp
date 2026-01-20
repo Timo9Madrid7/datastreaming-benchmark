@@ -86,6 +86,8 @@ void KafkaCppPublisher::initialize() {
 	conf_->set("compression.type", "none", errstr);
 	conf_->set("queue.buffering.max.kbytes", "4194304", errstr);
 	conf_->set("queue.buffering.max.messages", "1000000", errstr);
+	// Force to send large messages if needed
+	conf_->set("message.max.bytes", "16777216", errstr);
 
 	producer_.reset(RdKafka::Producer::create(conf_.get(), errstr));
 
