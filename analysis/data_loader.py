@@ -49,6 +49,7 @@ def discover_log_roots(
 
     return roots or [DEFAULT_LOGS_ROOT]
 
+
 def infer_duration_seconds_from_logs(
     scenario: str, logs_root: str | Path = PATH
 ) -> int | None:
