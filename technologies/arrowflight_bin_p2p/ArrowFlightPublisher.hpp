@@ -30,11 +30,24 @@ class ArrowFlightPublisher : public IPublisher {
 	void send_message(const Payload &message, std::string &ticket) override;
 	void log_configuration() override;
 
-	struct StreamState {
+	struct TicketState {
+		struct Entry {
+			uint64_t seq;
+			std::shared_ptr<arrow::RecordBatch> batch;
+		};
+		struct ConsumerState {
+			uint64_t next_seq = 0;
+		};
+
 		std::mutex m;
 		std::condition_variable cv;
-		std::deque<std::shared_ptr<arrow::RecordBatch>> q;
-		bool finished = false; // Set to true when receiving termination signal
+		std::deque<Entry> q;
+		uint64_t base_seq = 0;
+		uint64_t next_seq = 0;
+		bool finished = false;
+
+		uint64_t next_consumer_id = 1;
+		std::unordered_map<uint64_t, std::shared_ptr<ConsumerState>> consumers;
 	};
 
   private:
@@ -151,10 +164,9 @@ class ArrowFlightPublisher : public IPublisher {
 
 	// ticket -> queue
 	std::mutex streams_mu_;
-	std::unordered_map<std::string, std::shared_ptr<StreamState>> streams_;
+	std::unordered_map<std::string, std::shared_ptr<TicketState>> streams_;
 
-	std::shared_ptr<StreamState>
-	get_or_create_stream_(const std::string &ticket);
+	std::shared_ptr<TicketState> get_or_create_stream_(const std::string &ticket);
 	void enqueue_batch_(const std::string &ticket,
 	                    const std::shared_ptr<arrow::RecordBatch> &batch,
 	                    bool is_termination);
