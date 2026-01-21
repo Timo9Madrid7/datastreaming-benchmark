@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdlib>
 #include <string>
+#include <zmq.hpp>
 
 #include "Payload.hpp"
 #include "Utils.hpp"
@@ -36,6 +37,8 @@ ZeroMQP2PPublisher::ZeroMQP2PPublisher(std::shared_ptr<Logger> logger) try
       context(
           std::atoi(utils::get_env_var_or_default("IO_THREADS", "1").c_str())),
       publisher(context, ZMQ_PUB) {
+	publisher.set(zmq::sockopt::linger, -1);
+	publisher.set(zmq::sockopt::sndhwm, 5000);
 	logger->log_debug("[ZeroMQP2P Publisher] Constructor finished");
 } catch (const zmq::error_t &e) {
 	logger->log_error("[ZeroMQP2P Publisher] Constructor failed: "

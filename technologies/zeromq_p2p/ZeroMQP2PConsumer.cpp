@@ -60,6 +60,7 @@ ZeroMQP2PConsumer::ZeroMQP2PConsumer(std::shared_ptr<Logger> logger) try
     : IConsumer(logger), context(1), subscriber(context, ZMQ_SUB),
       deserializer_(logger) {
 	subscriber.set(zmq::sockopt::rcvtimeo, 10000);
+	subscriber.set(zmq::sockopt::rcvhwm, 5000);
 	logger->log_debug("[ZeroMQP2P Consumer] Constructor finished");
 } catch (const zmq::error_t &e) {
 	std::string err_msg =
