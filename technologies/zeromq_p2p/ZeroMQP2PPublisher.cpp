@@ -3,8 +3,10 @@
 #include <cstddef>
 #include <cstdlib>
 #include <string>
+#include <zmq.hpp>
 
 #include "Payload.hpp"
+#include "Utils.hpp"
 
 bool ZeroMQP2PPublisher::serialize(const Payload &message, std::string topic,
                                    void *out) {
@@ -31,7 +33,12 @@ bool ZeroMQP2PPublisher::serialize(const Payload &message, std::string topic,
 }
 
 ZeroMQP2PPublisher::ZeroMQP2PPublisher(std::shared_ptr<Logger> logger) try
-    : IPublisher(logger), context(1), publisher(context, ZMQ_PUB) {
+    : IPublisher(logger),
+      context(
+          std::atoi(utils::get_env_var_or_default("IO_THREADS", "1").c_str())),
+      publisher(context, ZMQ_PUB) {
+	publisher.set(zmq::sockopt::linger, -1);
+	publisher.set(zmq::sockopt::sndhwm, 5000);
 	logger->log_debug("[ZeroMQP2P Publisher] Constructor finished");
 } catch (const zmq::error_t &e) {
 	logger->log_error("[ZeroMQP2P Publisher] Constructor failed: "
@@ -115,6 +122,8 @@ void ZeroMQP2PPublisher::log_configuration() {
 	logger->log_config("[CONFIG] ZMQ_SNDHWM=" + std::to_string(hwm));
 	logger->log_config("[CONFIG] ZMQ_LINGER=" + std::to_string(linger));
 	logger->log_config("[CONFIG] ZMQ_SNDBUF=" + std::to_string(snd_buffer));
+	logger->log_config("[CONFIG] IO_THREADS="
+	                   + utils::get_env_var_or_default("IO_THREADS", "1"));
 
 	int major, minor, patch;
 	zmq_version(&major, &minor, &patch);
