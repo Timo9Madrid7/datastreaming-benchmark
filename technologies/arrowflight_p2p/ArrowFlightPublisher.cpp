@@ -4,9 +4,11 @@
 #include <arrow/result.h>
 #include <arrow/type.h>
 #include <arrow/type_fwd.h>
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -46,13 +48,37 @@ ArrowFlightPublisher::~ArrowFlightPublisher() {
 	logger->log_debug("[Flight Publisher] Publisher destructor finished.");
 }
 
-std::shared_ptr<ArrowFlightPublisher::StreamState>
+namespace {
+static void gc_locked(ArrowFlightPublisher::TicketState &state) {
+	if (state.consumers.empty()) {
+		state.q.clear();
+		state.base_seq = state.next_seq;
+		return;
+	}
+
+	uint64_t min_next = std::numeric_limits<uint64_t>::max();
+	for (const auto &kv : state.consumers) {
+		min_next = std::min(min_next, kv.second->next_seq);
+	}
+	if (min_next <= state.base_seq) {
+		return;
+	}
+
+	const uint64_t drop = min_next - state.base_seq;
+	for (uint64_t i = 0; i < drop && !state.q.empty(); ++i) {
+		state.q.pop_front();
+	}
+	state.base_seq = min_next;
+}
+} // namespace
+
+std::shared_ptr<ArrowFlightPublisher::TicketState>
 ArrowFlightPublisher::get_or_create_stream_(const std::string &ticket) {
 	std::lock_guard<std::mutex> lk(streams_mu_);
 	auto it = streams_.find(ticket);
 	if (it != streams_.end())
 		return it->second;
-	auto s = std::make_shared<StreamState>();
+	auto s = std::make_shared<TicketState>();
 	streams_[ticket] = s;
 	return s;
 }
@@ -63,20 +89,39 @@ void ArrowFlightPublisher::enqueue_batch_(
 	auto s = get_or_create_stream_(ticket);
 	{
 		std::lock_guard<std::mutex> lk(s->m);
-		s->q.push_back(std::move(batch));
+		if (s->q.empty()) {
+			s->base_seq = s->next_seq;
+		}
+		s->q.push_back(TicketState::Entry{s->next_seq, batch});
+		++s->next_seq;
 		if (is_termination)
 			s->finished = true;
+		gc_locked(*s);
 	}
 	s->cv.notify_all();
 }
 
 namespace {
-class BlockingQueueRecordBatchReader : public arrow::RecordBatchReader {
+class FanoutRecordBatchReader : public arrow::RecordBatchReader {
   public:
-	BlockingQueueRecordBatchReader(
+	FanoutRecordBatchReader(
 	    std::shared_ptr<arrow::Schema> schema,
-	    std::shared_ptr<ArrowFlightPublisher::StreamState> state)
-	    : schema_(std::move(schema)), state_(std::move(state)) {
+	    std::shared_ptr<ArrowFlightPublisher::TicketState> state,
+	    uint64_t consumer_id,
+	    std::shared_ptr<ArrowFlightPublisher::TicketState::ConsumerState>
+	        consumer_state)
+	    : schema_(std::move(schema)), state_(std::move(state)),
+	      consumer_id_(consumer_id), consumer_state_(std::move(consumer_state)) {
+	}
+
+	~FanoutRecordBatchReader() override {
+		auto state = state_;
+		if (!state)
+			return;
+		std::lock_guard<std::mutex> lk(state->m);
+		state->consumers.erase(consumer_id_);
+		gc_locked(*state);
+		state->cv.notify_all();
 	}
 
 	std::shared_ptr<arrow::Schema> schema() const override {
@@ -84,24 +129,45 @@ class BlockingQueueRecordBatchReader : public arrow::RecordBatchReader {
 	}
 
 	arrow::Status ReadNext(std::shared_ptr<arrow::RecordBatch> *out) override {
-		std::unique_lock<std::mutex> lk(state_->m);
-		state_->cv.wait(lk,
-		                [&] { return !state_->q.empty() || state_->finished; });
-
-		if (!state_->q.empty()) {
-			*out = std::move(state_->q.front());
-			state_->q.pop_front();
+		if (!state_ || !consumer_state_) {
+			*out = nullptr;
 			return arrow::Status::OK();
 		}
 
-		// finished && empty => end of stream
+		std::unique_lock<std::mutex> lk(state_->m);
+		state_->cv.wait(lk, [&] {
+			return (consumer_state_->next_seq < state_->next_seq)
+			    || (state_->finished && consumer_state_->next_seq >= state_->next_seq);
+		});
+
+		if (consumer_state_->next_seq < state_->next_seq) {
+			if (consumer_state_->next_seq < state_->base_seq) {
+				return arrow::Status::Invalid(
+				    "consumer cursor behind buffer (unexpected)");
+			}
+			const uint64_t idx = consumer_state_->next_seq - state_->base_seq;
+			if (idx >= state_->q.size()) {
+				return arrow::Status::Invalid(
+				    "buffer index out of range (unexpected)");
+			}
+
+			*out = state_->q[static_cast<size_t>(idx)].batch;
+			++consumer_state_->next_seq;
+			gc_locked(*state_);
+			return arrow::Status::OK();
+		}
+
+		// finished and no more data
 		*out = nullptr;
 		return arrow::Status::OK();
 	}
 
   private:
 	std::shared_ptr<arrow::Schema> schema_;
-	std::shared_ptr<ArrowFlightPublisher::StreamState> state_;
+	std::shared_ptr<ArrowFlightPublisher::TicketState> state_;
+	uint64_t consumer_id_;
+	std::shared_ptr<ArrowFlightPublisher::TicketState::ConsumerState>
+	    consumer_state_;
 };
 } // namespace
 
@@ -117,8 +183,19 @@ arrow::Status ArrowFlightPublisher::FlightServerLight::DoGet(
 	publisher_->logger->log_info("[Flight Publisher] DoGet ticket=" + ticket);
 
 	auto state = publisher_->get_or_create_stream_(ticket);
-	auto reader = std::make_shared<BlockingQueueRecordBatchReader>(
-	    ArrowFlightPublisher::schema_, state);
+	std::shared_ptr<ArrowFlightPublisher::TicketState::ConsumerState> consumer;
+	uint64_t consumer_id = 0;
+	{
+		std::lock_guard<std::mutex> lk(state->m);
+		consumer = std::make_shared<ArrowFlightPublisher::TicketState::ConsumerState>();
+		// start from current head (replay backlog)
+		consumer->next_seq = state->base_seq;
+		consumer_id = state->next_consumer_id++;
+		state->consumers.emplace(consumer_id, consumer);
+	}
+
+	auto reader = std::make_shared<FanoutRecordBatchReader>(
+	    ArrowFlightPublisher::schema_, state, consumer_id, consumer);
 
 	*stream = std::make_unique<arrow::flight::RecordBatchStream>(reader);
 	return arrow::Status::OK();
