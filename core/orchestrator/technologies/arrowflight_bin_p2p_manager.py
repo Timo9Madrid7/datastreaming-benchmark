@@ -4,7 +4,7 @@ from ..technology_manager import TechnologyManager, register_technology
 
 
 @register_technology("arrowflight_bin_p2p")
-class ArrowFlightP2PManager(TechnologyManager):
+class ArrowFlightBinP2PManager(TechnologyManager):
 
     def __init__(self, tech_path, network_name="benchmark_network"):
         TechnologyManager.__init__(self, tech_path, network_name)
