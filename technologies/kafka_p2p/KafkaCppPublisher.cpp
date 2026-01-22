@@ -131,8 +131,8 @@ void KafkaCppPublisher::send_message(const Payload &message,
 		                  + message.message_id
 		                  + " Error: " + RdKafka::err2str(err));
 	} else {
-		logger->log_info("[Kafka Publisher] Produced message ID: "
-		                 + message.message_id + " to topic: " + topic);
+		logger->log_debug("[Kafka Publisher] Produced message ID: "
+		                  + message.message_id + " to topic: " + topic);
 	}
 
 	producer_->poll(0);
