@@ -43,10 +43,11 @@ void KafkaCppPublisher::initialize() {
 	const std::string port =
 	    utils::get_env_var_or_default("PUBLISHER_PORT", "9092");
 	// 0.0.0.0 is valid for bind(), not for connect(). Treat it as a common
-	// misconfiguration and default to localhost (broker runs in-container for kafka_p2p).
+	// misconfiguration and default to localhost (broker runs in-container for
+	// kafka_p2p).
 	if (vendpoint == "0.0.0.0") {
-		logger->log_error(
-		    "[Kafka Publisher] PUBLISHER_ENDPOINT=0.0.0.0 is not a valid broker address; using localhost instead.");
+		logger->log_error("[Kafka Publisher] PUBLISHER_ENDPOINT=0.0.0.0 is not "
+		                  "a valid broker address; using localhost instead.");
 		vendpoint = "localhost";
 	}
 	broker_ = vendpoint + ":" + port;
@@ -80,11 +81,11 @@ void KafkaCppPublisher::initialize() {
 
 	// Producer performance configuration (latency/throughput trade-offs)
 	conf_->set("acks", "0", errstr);
-	conf_->set("linger.ms", "1", errstr);
-	conf_->set("batch.size", "262144", errstr);
+	conf_->set("linger.ms", "5", errstr);
+	conf_->set("batch.size", "1048576", errstr);
 	conf_->set("batch.num.messages", "10000", errstr);
 	conf_->set("compression.type", "none", errstr);
-	conf_->set("queue.buffering.max.kbytes", "4194304", errstr);
+	conf_->set("queue.buffering.max.kbytes", "1048576", errstr);
 	conf_->set("queue.buffering.max.messages", "1000000", errstr);
 	// Force to send large messages if needed
 	conf_->set("message.max.bytes", "16777216", errstr);
@@ -112,17 +113,26 @@ void KafkaCppPublisher::send_message(const Payload &message,
 		return;
 	}
 
-	RdKafka::ErrorCode err = producer_->produce(
-	    topic, RdKafka::Topic::PARTITION_UA, RdKafka::Producer::RK_MSG_COPY,
-	    const_cast<char *>(serialized.data()), serialized.size(),
-	    message.message_id.c_str(), message.message_id.size(), 0, nullptr);
+	RdKafka::ErrorCode err;
+	do {
+		err = producer_->produce(
+		    topic, RdKafka::Topic::PARTITION_UA, RdKafka::Producer::RK_MSG_COPY,
+		    const_cast<char *>(serialized.data()), serialized.size(),
+		    message.message_id.c_str(), message.message_id.size(), 0, nullptr);
+
+		if (err == RdKafka::ERR__QUEUE_FULL) {
+			producer_->poll(100);
+		}
+
+	} while (err == RdKafka::ERR__QUEUE_FULL);
 
 	if (err != RdKafka::ERR_NO_ERROR) {
-		logger->log_error("[Kafka Publisher] Produce failed: "
-		                  + RdKafka::err2str(err));
+		logger->log_error("[Kafka Publisher] Failed to produce message ID: "
+		                  + message.message_id
+		                  + " Error: " + RdKafka::err2str(err));
 	} else {
-		logger->log_debug("[Kafka Publisher] Message queued for topic: "
-		                  + topic);
+		logger->log_debug("[Kafka Publisher] Produced message ID: "
+		                  + message.message_id + " to topic: " + topic);
 	}
 
 	producer_->poll(0);

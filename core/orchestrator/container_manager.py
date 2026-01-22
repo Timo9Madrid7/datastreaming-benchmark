@@ -163,6 +163,7 @@ class ContainerManager:
         message_size: int,
         n_messages: Optional[int] = None,
         duration: Optional[int] = None,
+        n_consumers: Optional[int] = None,
         paused: bool = True,
         mode: Optional[str] = None,
     ) -> str:
@@ -222,6 +223,10 @@ class ContainerManager:
                 "PAYLOAD_SAMPLES": 5,  # can be hardcoded for now?
                 "PAYLOAD_KIND": "FLAT",  # TODO read payload kind from config
             }
+            
+            if tech_name.startswith("zeromq"):
+                environment["IO_THREADS"] = n_consumers if n_consumers is not None else 1
+    
             logger.debug(f"Environment: {environment}")
             logger.debug(
                 f"Starting container from image {tech_name}_publisher in mode {mode}"
@@ -285,10 +290,11 @@ class ContainerManager:
                 "TOPICS": ",".join(topics_list),
                 "BACKLOG_SIZE": backlog_size,
             }
-            if tech_name == "kafka_p2p":
+            if tech_name.startswith("kafka"):
                 # Allow multiple consumers to split partitions and scale throughput.
                 # Without this, each consumer uses its own group and receives the full stream.
-                environment["KAFKA_GROUP_ID"] = "benchmark_kafka_p2p_group"
+                # environment["KAFKA_GROUP_ID"] = "benchmark_kafka_p2p_group"
+                pass                
             if "p2p" in tech_name:
                 logger.debug(f"Using p2p broker {publishers_list}")
                 environment["CONSUMER_ENDPOINT"] = ",".join(publishers_list)

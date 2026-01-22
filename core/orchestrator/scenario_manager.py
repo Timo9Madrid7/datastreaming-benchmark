@@ -111,6 +111,7 @@ class ScenarioManager:
                 "message_size": self.message_size,
                 "n_messages": self.number_of_messages,
                 "duration": self.duration,
+                "n_consumers": self.num_consumers,
             }
             logger.debug(f"config for publisher {f'P{pub_id}'}: {pub_configs[pub_id]}")
         logger.debug(f"pub_configs: {pub_configs}")

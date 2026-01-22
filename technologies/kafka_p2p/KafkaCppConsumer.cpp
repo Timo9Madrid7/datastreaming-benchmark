@@ -102,10 +102,9 @@ void KafkaCppConsumer::initialize() {
 	// container => each consumer receives the full stream).
 	const std::optional<std::string> env_group_id =
 	    utils::get_env_var("KAFKA_GROUP_ID");
-	const std::string group_id =
-	    (env_group_id && !env_group_id->empty())
-	        ? env_group_id.value()
-	        : ("benchmark_group_" + consumer_id.value());
+	const std::string group_id = (env_group_id && !env_group_id->empty())
+	    ? env_group_id.value()
+	    : ("benchmark_group_" + consumer_id.value());
 	logger->log_info("[Kafka Consumer] Using group.id: " + group_id);
 
 	conf_.reset(RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL));
@@ -169,34 +168,6 @@ void KafkaCppConsumer::initialize() {
 		throw std::runtime_error("Failed to create consumer: " + err_msg);
 	}
 
-	// Wait for broker metadata before subscribing/consuming to avoid starting
-	// in a long reconnect backoff window.
-	{
-		using namespace std::chrono_literals;
-		auto deadline = std::chrono::steady_clock::now() + 30s;
-		auto last_log = std::chrono::steady_clock::now() - 10s;
-		while (std::chrono::steady_clock::now() < deadline) {
-			RdKafka::Metadata *metadata = nullptr;
-			RdKafka::ErrorCode ec =
-			    consumer_->metadata(false, nullptr, &metadata, 2000);
-			if (metadata != nullptr) {
-				delete metadata;
-				metadata = nullptr;
-			}
-			if (ec == RdKafka::ERR_NO_ERROR) {
-				break;
-			}
-			auto now = std::chrono::steady_clock::now();
-			if (now - last_log >= 2s) {
-				logger->log_info(
-				    "[Kafka Consumer] Waiting for broker readiness: "
-				    + RdKafka::err2str(ec));
-				last_log = now;
-			}
-			std::this_thread::sleep_for(200ms);
-		}
-	}
-
 	std::istringstream topics(vtopics.value_or(""));
 	std::string topic;
 	std::unordered_set<std::string> unique_topics;
@@ -210,6 +181,64 @@ void KafkaCppConsumer::initialize() {
 		} else {
 			logger->log_debug(
 			    "[Kafka Consumer] Skipping empty or duplicate topic.");
+		}
+	}
+
+	// Ensure the server is running and all topics exist before subscribing.
+	{
+		using namespace std::chrono_literals;
+		auto deadline = std::chrono::steady_clock::now() + 30s;
+		bool all_present = false;
+		while (std::chrono::steady_clock::now() < deadline) {
+			RdKafka::Metadata *metadata = nullptr;
+			RdKafka::ErrorCode ec =
+			    consumer_->metadata(true, nullptr, &metadata, 2000);
+			all_present = true;
+			if (ec != RdKafka::ERR_NO_ERROR || metadata == nullptr) {
+				all_present = false;
+			} else {
+				// Build a set of topics present in metadata.
+				std::unordered_set<std::string> present;
+				present.reserve(metadata->topics()->size());
+				for (const auto *t : *(metadata->topics())) {
+					if (t == nullptr) {
+						continue;
+					}
+					// Some topics might exist but still have errors during
+					// creation; treat those as not ready yet.
+					if (t->err() == RdKafka::ERR_NO_ERROR
+					    && !t->topic().empty()) {
+						present.insert(t->topic());
+					}
+				}
+				for (const auto &name : topic_names_) {
+					if (present.find(name) == present.end()) {
+						all_present = false;
+						break;
+					}
+				}
+			}
+			if (metadata != nullptr) {
+				delete metadata;
+				metadata = nullptr;
+			}
+			if (all_present) {
+				break;
+			}
+
+			auto now = std::chrono::steady_clock::now();
+			std::this_thread::sleep_for(200ms);
+		}
+		if (!all_present) {
+			std::string err_msg = "[Kafka Consumer] Timed out waiting for "
+			                      "topics to exist on broker "
+			                      "(broker='"
+			    + broker_
+			    + "'). "
+			      "This usually means the broker didn't create the topics yet, "
+			      "or the consumer was pointed at a different broker.";
+			logger->log_error(err_msg);
+			throw std::runtime_error(err_msg);
 		}
 	}
 
