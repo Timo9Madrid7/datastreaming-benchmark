@@ -1,0 +1,9 @@
+# rabbitmq C++ Consumer Dockerfile
+FROM rabbitmq_p2p_base
+
+# Set working directory
+WORKDIR /app/build/core/applications
+
+# Run the consumer app
+ENTRYPOINT ["./ConsumerApp"]
+CMD [ "INFO", "DEBUG", "STUDY", "ERROR" ]
