@@ -1,9 +1,11 @@
 #include <memory>
+
 #include "./RabbitMQConsumer.hpp"
 #include "./RabbitMQPublisher.hpp"
 #include "Factory.hpp"
 #include "IConsumer.hpp"
 #include "IPublisher.hpp"
+
 
 extern "C" void register_technology(std::shared_ptr<Logger> logger) {
 	Factory<IPublisher>::registerClient(

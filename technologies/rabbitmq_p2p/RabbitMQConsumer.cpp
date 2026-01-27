@@ -1,12 +1,11 @@
 #include "RabbitMQConsumer.hpp"
 
 #include <chrono>
+#include <event2/event.h>
+#include <event2/thread.h>
 #include <sstream>
 #include <stdexcept>
 #include <unordered_set>
-
-#include <event2/event.h>
-#include <event2/thread.h>
 
 #include "Logger.hpp"
 #include "Payload.hpp"
@@ -32,15 +31,15 @@ void RabbitMQConsumer::initialize() {
 	static std::once_flag libevent_threading_once;
 	std::call_once(libevent_threading_once, []() {
 		if (evthread_use_pthreads() != 0) {
-			throw std::runtime_error(
-			    "[RabbitMQ Consumer] Failed to enable libevent pthread support.");
+			throw std::runtime_error("[RabbitMQ Consumer] Failed to enable "
+			                         "libevent pthread support.");
 		}
 	});
 
 	const auto vtopics = utils::get_env_var("TOPICS");
 	if (!vtopics || vtopics->empty()) {
-		throw std::runtime_error(
-		    "[RabbitMQ Consumer] Missing required environment variable TOPICS.");
+		throw std::runtime_error("[RabbitMQ Consumer] Missing required "
+		                         "environment variable TOPICS.");
 	}
 
 	const std::string port =
@@ -63,8 +62,8 @@ void RabbitMQConsumer::initialize() {
 		amqp_url_ = build_amqp_url_(endpoint, port);
 	}
 
-	exchange_ =
-	    utils::get_env_var_or_default("RABBITMQ_EXCHANGE", "benchmark_exchange");
+	exchange_ = utils::get_env_var_or_default("RABBITMQ_EXCHANGE",
+	                                          "benchmark_exchange");
 
 	std::unordered_set<std::string> unique_topics;
 	std::string topic;
@@ -79,7 +78,8 @@ void RabbitMQConsumer::initialize() {
 	}
 
 	if (unique_topics.empty()) {
-		throw std::runtime_error("[RabbitMQ Consumer] No valid topics provided.");
+		throw std::runtime_error(
+		    "[RabbitMQ Consumer] No valid topics provided.");
 	}
 
 	event_base_ = event_base_new();
@@ -100,18 +100,37 @@ void RabbitMQConsumer::initialize() {
 
 	start_event_loop_();
 
+	constexpr int kMaxAttempts = 60; // 60 * 500ms = 30s
+	bool channel_ready = false;
+	for (int attempt = 1; attempt <= kMaxAttempts; ++attempt) {
+		channel_ready = channel_->ready();
+		if (channel_ready) {
+			break;
+		}
+		logger->log_info(
+		    "[RabbitMQ Consumer] Connect attempt " + std::to_string(attempt)
+		    + "/" + std::to_string(kMaxAttempts) + " failed to " + amqp_url_);
+		std::this_thread::sleep_for(std::chrono::milliseconds(500));
+	}
+	if (!channel_ready) {
+		throw std::runtime_error("[RabbitMQ Consumer] Failed to connect to "
+		                         + amqp_url_);
+	}
+
 	channel_->declareExchange(exchange_, AMQP::direct)
 	    .onSuccess([this]() {
-			{
-				std::lock_guard<std::mutex> lock(ready_mu_);
-				ready_.store(true, std::memory_order_release);
-			}
-			ready_cv_.notify_all();
-			logger->log_info("[RabbitMQ Consumer] Exchange declared: " + exchange_);
+		    {
+			    std::lock_guard<std::mutex> lock(ready_mu_);
+			    ready_.store(true, std::memory_order_release);
+		    }
+		    ready_cv_.notify_all();
+		    logger->log_info("[RabbitMQ Consumer] Exchange declared: "
+		                     + exchange_);
 	    })
 	    .onError([this](const char *msg) {
-			logger->log_error(
-			    std::string("[RabbitMQ Consumer] Exchange declare error: ") + msg);
+		    logger->log_error(
+		        std::string("[RabbitMQ Consumer] Exchange declare error: ")
+		        + msg);
 	    });
 
 	if (!wait_ready_(30000)) {
@@ -135,16 +154,16 @@ void RabbitMQConsumer::subscribe(const std::string &topic) {
 
 void RabbitMQConsumer::start_loop() {
 	deserializer_.start(
-	    [](const void *data, size_t len, std::string & /*topic*/, Payload &out) {
-		    return Payload::deserialize(data, len, out);
-	    },
+	    [](const void *data, size_t len, std::string & /*topic*/,
+	       Payload &out) { return Payload::deserialize(data, len, out); },
 	    [this](const Payload &payload, const std::string & /*topic*/,
 	           size_t /*raw_len*/) {
 		    if (payload.kind == PayloadKind::TERMINATION) {
 			    subscribed_streams.dec();
-			    logger->log_info("[RabbitMQ Consumer] Termination signal received "
-			                     "for message ID: "
-			                     + payload.message_id);
+			    logger->log_info(
+			        "[RabbitMQ Consumer] Termination signal received "
+			        "for message ID: "
+			        + payload.message_id);
 			    if (subscribed_streams.get() == 0) {
 				    logger->log_info(
 				        "[RabbitMQ Consumer] All streams terminated. Exiting.");
@@ -184,7 +203,7 @@ void RabbitMQConsumer::start_event_loop_() {
 }
 
 void RabbitMQConsumer::stop_event_loop_() {
-    logger->log_debug("[RabbitMQ Consumer] Stopping event loop...");
+	logger->log_debug("[RabbitMQ Consumer] Stopping event loop...");
 	if (event_base_) {
 		event_base_loopbreak(event_base_);
 	}
@@ -195,7 +214,7 @@ void RabbitMQConsumer::stop_event_loop_() {
 		event_base_free(event_base_);
 		event_base_ = nullptr;
 	}
-    logger->log_debug("[RabbitMQ Consumer] Event loop stopped.");
+	logger->log_debug("[RabbitMQ Consumer] Event loop stopped.");
 }
 
 bool RabbitMQConsumer::wait_ready_(int timeout_ms) {
@@ -203,26 +222,23 @@ bool RabbitMQConsumer::wait_ready_(int timeout_ms) {
 	if (ready_.load(std::memory_order_acquire)) {
 		return true;
 	}
-	return ready_cv_.wait_for(lock, std::chrono::milliseconds(timeout_ms),
-	                          [this]() {
-			                      return ready_.load(
-			                          std::memory_order_acquire);
-	                          });
+	return ready_cv_.wait_for(
+	    lock, std::chrono::milliseconds(timeout_ms),
+	    [this]() { return ready_.load(std::memory_order_acquire); });
 }
 
 std::string RabbitMQConsumer::build_amqp_url_(const std::string &endpoint,
-	                                          const std::string &port) const {
+                                              const std::string &port) const {
 	const std::string user =
 	    utils::get_env_var_or_default("RABBITMQ_USER", "guest");
 	const std::string password =
 	    utils::get_env_var_or_default("RABBITMQ_PASSWORD", "guest");
-	std::string vhost =
-	    utils::get_env_var_or_default("RABBITMQ_VHOST", "/");
+	std::string vhost = utils::get_env_var_or_default("RABBITMQ_VHOST", "/");
 	if (vhost.empty() || vhost[0] != '/') {
 		vhost = "/" + vhost;
 	}
 	return "amqp://" + user + ":" + password + "@" + endpoint + ":" + port
-	       + vhost;
+	    + vhost;
 }
 
 void RabbitMQConsumer::setup_topic_queue_(const std::string &topic) {
@@ -232,62 +248,62 @@ void RabbitMQConsumer::setup_topic_queue_(const std::string &topic) {
 
 	channel_->declareQueue("", AMQP::exclusive)
 	    .onSuccess([this, topic](const std::string &name, uint32_t, uint32_t) {
-			topic_queues_[topic] = name;
-			channel_->bindQueue(exchange_, name, topic)
-			    .onSuccess([this, topic, name]() {
-					channel_->consume(name, AMQP::noack)
-					    .onReceived(
-					        [this, topic](const AMQP::Message &message, uint64_t,
-					                      bool) {
-						        const size_t len = message.bodySize();
-						        auto holder = std::make_shared<std::string>(
-						            message.body(), message.body() + len);
-						        Payload payload;
-						        if (!Payload::deserialize_id(holder->data(), holder->size(),
-						                                   payload)) {
-							        logger->log_error(
-							            "[RabbitMQ Consumer] Deserialization failed.");
-							        return;
-						        }
+		    topic_queues_[topic] = name;
+		    channel_->bindQueue(exchange_, name, topic)
+		        .onSuccess([this, topic, name]() {
+			        channel_->consume(name, AMQP::noack)
+			            .onReceived([this, topic](const AMQP::Message &message,
+			                                      uint64_t, bool) {
+				            const size_t len = message.bodySize();
+				            auto holder = std::make_shared<std::string>(
+				                message.body(), message.body() + len);
+				            Payload payload;
+				            if (!Payload::deserialize_id(
+				                    holder->data(), holder->size(), payload)) {
+					            logger->log_error("[RabbitMQ Consumer] "
+					                              "Deserialization failed.");
+					            return;
+				            }
 
-						        logger->log_study(
-						            "Reception," + payload.message_id + "," + topic);
+				            logger->log_study("Reception," + payload.message_id
+				                              + "," + topic);
 
-						        utils::Deserializer::Item item;
-						        item.holder = holder;
-						        item.data = holder->data();
-						        item.len = holder->size();
-						        item.topic = topic;
-						        item.message_id = payload.message_id;
-						        if (!deserializer_.enqueue(std::move(item))) {
-							        logger->log_error(
-							            "[RabbitMQ Consumer] Deserializer queue full; "
-							            "dropping message.");
-						        }
-					        })
-					    .onSuccess([this, topic](const std::string &tag) {
-							logger->log_info(
-							    "[RabbitMQ Consumer] Consuming topic=" + topic
-							    + " tag=" + tag);
-					    })
-					    .onError([this, topic](const char *msg) {
-							logger->log_error(
-							    std::string("[RabbitMQ Consumer] Consume error (topic="
-							                + topic + "): ")
-							    + msg);
-					    });
-			    })
-			    .onError([this, topic](const char *msg) {
-					logger->log_error(
-					    std::string("[RabbitMQ Consumer] Bind error (topic=" + topic
-					                + "): ")
-					    + msg);
-			    });
+				            utils::Deserializer::Item item;
+				            item.holder = holder;
+				            item.data = holder->data();
+				            item.len = holder->size();
+				            item.topic = topic;
+				            item.message_id = payload.message_id;
+				            if (!deserializer_.enqueue(std::move(item))) {
+					            logger->log_error("[RabbitMQ Consumer] "
+					                              "Deserializer queue full; "
+					                              "dropping message.");
+				            }
+			            })
+			            .onSuccess([this, topic](const std::string &tag) {
+				            logger->log_info(
+				                "[RabbitMQ Consumer] Consuming topic=" + topic
+				                + " tag=" + tag);
+			            })
+			            .onError([this, topic](const char *msg) {
+				            logger->log_error(
+				                std::string(
+				                    "[RabbitMQ Consumer] Consume error (topic="
+				                    + topic + "): ")
+				                + msg);
+			            });
+		        })
+		        .onError([this, topic](const char *msg) {
+			        logger->log_error(
+			            std::string("[RabbitMQ Consumer] Bind error (topic="
+			                        + topic + "): ")
+			            + msg);
+		        });
 	    })
 	    .onError([this, topic](const char *msg) {
-			logger->log_error(
-			    std::string("[RabbitMQ Consumer] Queue declare error (topic="
-			                + topic + "): ")
-			    + msg);
+		    logger->log_error(
+		        std::string("[RabbitMQ Consumer] Queue declare error (topic="
+		                    + topic + "): ")
+		        + msg);
 	    });
 }

@@ -34,8 +34,8 @@ void RabbitMQPublisher::initialize() {
 	static std::once_flag libevent_threading_once;
 	std::call_once(libevent_threading_once, []() {
 		if (evthread_use_pthreads() != 0) {
-			throw std::runtime_error(
-			    "[RabbitMQ Publisher] Failed to enable libevent pthread support.");
+			throw std::runtime_error("[RabbitMQ Publisher] Failed to enable "
+			                         "libevent pthread support.");
 		}
 	});
 

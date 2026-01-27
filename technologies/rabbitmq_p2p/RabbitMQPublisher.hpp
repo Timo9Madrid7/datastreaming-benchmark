@@ -1,14 +1,13 @@
 #pragma once
 
+#include <amqpcpp.h>
+#include <amqpcpp/libevent.h>
 #include <atomic>
 #include <condition_variable>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
-
-#include <amqpcpp.h>
-#include <amqpcpp/libevent.h>
 
 #include "IPublisher.hpp"
 

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <amqpcpp.h>
+#include <amqpcpp/libevent.h>
 #include <atomic>
 #include <condition_variable>
 #include <memory>
@@ -8,9 +10,6 @@
 #include <thread>
 #include <unordered_map>
 #include <vector>
-
-#include <amqpcpp.h>
-#include <amqpcpp/libevent.h>
 
 #include "Deserializer.hpp"
 #include "IConsumer.hpp"
