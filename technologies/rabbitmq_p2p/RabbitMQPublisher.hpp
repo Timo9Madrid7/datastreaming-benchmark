@@ -4,6 +4,7 @@
 #include <amqpcpp/libevent.h>
 #include <atomic>
 #include <condition_variable>
+#include <cstddef>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -37,6 +38,7 @@ class RabbitMQPublisher : public IPublisher {
 	std::unique_ptr<AMQP::LibEventHandler> handler_;
 	std::unique_ptr<AMQP::TcpConnection> connection_;
 	std::unique_ptr<AMQP::TcpChannel> channel_;
+	size_t max_out_queue_bytes_;
 
 	std::thread io_thread_;
 	std::mutex ready_mu_;

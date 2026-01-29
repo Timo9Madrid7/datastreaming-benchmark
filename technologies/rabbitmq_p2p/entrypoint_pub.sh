@@ -14,6 +14,7 @@ if [ ! -f "$RABBITMQ_CONFIG_FILE" ]; then
   cat > "$RABBITMQ_CONFIG_FILE" <<'EOF'
 listeners.tcp.default = 5672
 loopback_users.guest = false
+vm_memory_high_watermark.absolute = 4GB
 EOF
 fi
 

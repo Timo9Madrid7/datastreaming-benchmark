@@ -2,9 +2,12 @@
 
 #include <amqpcpp/linux_tcp/tcpconnection.h>
 #include <chrono>
+#include <cstddef>
 #include <event2/event.h>
 #include <event2/thread.h>
 #include <stdexcept>
+#include <string>
+#include <utility>
 
 #include "Logger.hpp"
 #include "Payload.hpp"
@@ -51,6 +54,10 @@ void RabbitMQPublisher::initialize() {
 	exchange_ = utils::get_env_var_or_default("RABBITMQ_EXCHANGE",
 	                                          "benchmark_exchange");
 
+	max_out_queue_bytes_ = static_cast<size_t>(std::stoul(
+	    utils::get_env_var_or_default("RABBITMQ_MAX_OUT_BUFFER_BYTES",
+	                                  "1073741824"))); // 1GB default
+
 	event_base_ = event_base_new();
 	if (!event_base_) {
 		throw std::runtime_error(
@@ -96,16 +103,9 @@ void RabbitMQPublisher::initialize() {
 
 void RabbitMQPublisher::send_message(const Payload &message,
                                      std::string &topic) {
-	if (!ready_.load(std::memory_order_acquire)) {
-		logger->log_error(
-		    "[RabbitMQ Publisher] Send attempted before channel ready.");
-		return;
-	}
-
 	logger->log_study("Serializing," + message.message_id + "," + topic);
 
-	const size_t serialized_size = message.serialized_bytes;
-	std::string serialized(serialized_size, '\0');
+	std::string serialized(message.serialized_bytes, '\0');
 	if (!Payload::serialize(message, serialized.data())) {
 		logger->log_error(
 		    "[RabbitMQ Publisher] Serialization failed for message ID: "
@@ -113,21 +113,49 @@ void RabbitMQPublisher::send_message(const Payload &message,
 		return;
 	}
 
-	bool ok = false;
-	if (channel_) {
-		ok = channel_->publish(exchange_, topic, serialized.data(),
-		                       serialized.size());
+	auto *arg_data =
+	    new std::tuple<RabbitMQPublisher *, std::string, std::string>(
+	        this, std::move(serialized), topic);
+
+	while (connection_->queued() > max_out_queue_bytes_) {
+		logger->log_debug("[RabbitMQ Publisher] Throttling publish, out "
+		                  "queue size: "
+		                  + std::to_string(connection_->queued()) + " bytes.");
+		std::this_thread::sleep_for(std::chrono::milliseconds(200));
 	}
 
-	if (!ok) {
-		logger->log_error("[RabbitMQ Publisher] Publish failed for message ID: "
-		                  + message.message_id);
-		return;
-	}
+	int ret = event_base_once(
+	    event_base_, -1, EV_TIMEOUT,
+	    [](evutil_socket_t, short, void *arg) {
+		    auto *data = static_cast<
+		        std::tuple<RabbitMQPublisher *, std::string, std::string> *>(
+		        arg);
+		    RabbitMQPublisher *publisher = std::get<0>(*data);
+		    const std::string &serialized = std::get<1>(*data);
+		    const std::string &topic = std::get<2>(*data);
+
+		    bool ok = publisher->channel_->publish(publisher->exchange_, topic,
+		                                           serialized.data(),
+		                                           serialized.size());
+
+		    if (!ok) {
+			    publisher->logger->log_error(
+			        "[RabbitMQ Publisher] Publish failed.");
+		    }
+
+		    delete data;
+	    },
+	    arg_data, nullptr);
 
 	logger->log_study("Publication," + message.message_id + "," + topic + ","
 	                  + std::to_string(message.data_size) + ","
-	                  + std::to_string(serialized_size));
+	                  + std::to_string(message.serialized_bytes));
+
+	if (ret != 0) {
+		logger->log_error(
+		    "[RabbitMQ Publisher] event_base_once failed to schedule publish.");
+		delete arg_data;
+	}
 }
 
 void RabbitMQPublisher::log_configuration() {
@@ -136,6 +164,8 @@ void RabbitMQPublisher::log_configuration() {
 	logger->log_config("[CONFIG] EXCHANGE=" + exchange_);
 	logger->log_config("[CONFIG] TOPICS="
 	                   + utils::get_env_var_or_default("TOPICS", ""));
+	logger->log_config("[CONFIG] RABBITMQ_MAX_OUT_BUFFER_BYTES="
+	                   + std::to_string(max_out_queue_bytes_));
 	logger->log_config("[RabbitMQ Publisher] [CONFIG_END]");
 }
 
