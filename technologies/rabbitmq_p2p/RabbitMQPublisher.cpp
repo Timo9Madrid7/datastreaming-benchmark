@@ -1,6 +1,7 @@
 #include "RabbitMQPublisher.hpp"
 
 #include <amqpcpp/linux_tcp/tcpconnection.h>
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <event2/event.h>
@@ -13,6 +14,26 @@
 #include "Payload.hpp"
 #include "Utils.hpp"
 
+namespace {
+struct EventItem {
+	RabbitMQPublisher *publisher_ptr;
+	std::string serialized_message;
+	std::string topic;
+	std::string msg_id;
+	PayloadKind msg_kind;
+	size_t payload_size;
+	size_t serialized_size;
+
+	EventItem(RabbitMQPublisher *ptr, std::string &&msg, std::string topic,
+	          std::string id, PayloadKind kind, size_t p_size, size_t s_size)
+	    : publisher_ptr(ptr), serialized_message(std::move(msg)),
+	      topic(std::move(topic)), msg_id(std::move(id)),
+	      msg_kind(std::move(kind)), payload_size(p_size),
+	      serialized_size(s_size) {
+	}
+};
+} // namespace
+
 RabbitMQPublisher::RabbitMQPublisher(std::shared_ptr<Logger> logger)
     : IPublisher(logger) {
 	logger->log_info("[RabbitMQ Publisher] RabbitMQPublisher created.");
@@ -20,6 +41,14 @@ RabbitMQPublisher::RabbitMQPublisher(std::shared_ptr<Logger> logger)
 
 RabbitMQPublisher::~RabbitMQPublisher() {
 	logger->log_debug("[RabbitMQ Publisher] Cleaning up RabbitMQ publisher...");
+	while (connection_->queued() > 0
+	       || !terminated_.load(std::memory_order_acquire)) {
+		logger->log_debug("[RabbitMQ Publisher] Waiting for outgoing "
+		                  "messages to be sent, remaining: "
+		                  + std::to_string(connection_->queued()) + " bytes.");
+		std::this_thread::sleep_for(std::chrono::milliseconds(200));
+	}
+	std::this_thread::sleep_for(std::chrono::milliseconds(500));
 	if (channel_) {
 		channel_->close();
 	}
@@ -113,9 +142,9 @@ void RabbitMQPublisher::send_message(const Payload &message,
 		return;
 	}
 
-	auto *arg_data =
-	    new std::tuple<RabbitMQPublisher *, std::string, std::string>(
-	        this, std::move(serialized), topic);
+	EventItem *arg_data = new EventItem(
+	    this, std::move(serialized), topic, message.message_id, message.kind,
+	    message.data_size, message.serialized_bytes);
 
 	while (connection_->queued() > max_out_queue_bytes_) {
 		logger->log_debug("[RabbitMQ Publisher] Throttling publish, out "
@@ -127,29 +156,31 @@ void RabbitMQPublisher::send_message(const Payload &message,
 	int ret = event_base_once(
 	    event_base_, -1, EV_TIMEOUT,
 	    [](evutil_socket_t, short, void *arg) {
-		    auto *data = static_cast<
-		        std::tuple<RabbitMQPublisher *, std::string, std::string> *>(
-		        arg);
-		    RabbitMQPublisher *publisher = std::get<0>(*data);
-		    const std::string &serialized = std::get<1>(*data);
-		    const std::string &topic = std::get<2>(*data);
+		    auto *item = static_cast<EventItem *>(arg);
 
-		    bool ok = publisher->channel_->publish(publisher->exchange_, topic,
-		                                           serialized.data(),
-		                                           serialized.size());
+		    bool ok = item->publisher_ptr->channel_->publish(
+		        item->publisher_ptr->exchange_, item->topic,
+		        item->serialized_message.data(), item->serialized_size);
 
-		    if (!ok) {
-			    publisher->logger->log_error(
-			        "[RabbitMQ Publisher] Publish failed.");
+		    if (ok) {
+			    item->publisher_ptr->logger->log_study(
+			        "Publication," + item->msg_id + "," + item->topic + ","
+			        + std::to_string(item->payload_size) + ","
+			        + std::to_string(item->serialized_size));
+		    } else {
+			    item->publisher_ptr->logger->log_error(
+			        "[RabbitMQ Publisher] Publish failed for message ID: "
+			        + item->msg_id);
 		    }
 
-		    delete data;
+		    if (item->msg_kind == PayloadKind::TERMINATION) {
+			    item->publisher_ptr->terminated_.store(
+			        true, std::memory_order_release);
+		    }
+
+		    delete item;
 	    },
 	    arg_data, nullptr);
-
-	logger->log_study("Publication," + message.message_id + "," + topic + ","
-	                  + std::to_string(message.data_size) + ","
-	                  + std::to_string(message.serialized_bytes));
 
 	if (ret != 0) {
 		logger->log_error(

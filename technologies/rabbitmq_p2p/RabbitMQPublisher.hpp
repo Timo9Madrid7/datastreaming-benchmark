@@ -44,4 +44,5 @@ class RabbitMQPublisher : public IPublisher {
 	std::mutex ready_mu_;
 	std::condition_variable ready_cv_;
 	std::atomic<bool> ready_{false};
+	std::atomic<bool> terminated_{false};
 };
