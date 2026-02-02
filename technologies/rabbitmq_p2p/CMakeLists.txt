@@ -2,7 +2,7 @@ add_library(rabbitmq_p2p_technology SHARED)
 
 target_sources(rabbitmq_p2p_technology PRIVATE
     RabbitMQPublisher.cpp
-    RabbitMQConsumer.cpp   
+    RabbitMQConsumer.cpp
     RabbitMQRegistration.cpp
 )
 

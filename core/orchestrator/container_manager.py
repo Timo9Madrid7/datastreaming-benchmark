@@ -245,7 +245,6 @@ class ContainerManager:
                 logger.info(
                     f"Waiting for RabbitMQ Broker in {container_name} to be ready before pausing...")
                 max_retries = 30
-                import time
                 for _ in range(max_retries):
                     exit_code, output = container.exec_run(
                         "rabbitmq-diagnostics -q check_port_connectivity")

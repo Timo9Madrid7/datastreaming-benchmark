@@ -1,6 +1,5 @@
 FROM rabbitmq_p2p_base
 
-
 # Install latest RabbitMQ from official repository
 RUN apt-get update \
     && apt-get install -y curl gnupg apt-transport-https \

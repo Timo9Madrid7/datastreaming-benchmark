@@ -6,7 +6,6 @@
 #include "IConsumer.hpp"
 #include "IPublisher.hpp"
 
-
 extern "C" void register_technology(std::shared_ptr<Logger> logger) {
 	Factory<IPublisher>::registerClient(
 	    "rabbitmq_p2p",

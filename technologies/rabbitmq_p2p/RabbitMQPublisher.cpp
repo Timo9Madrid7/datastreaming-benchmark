@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <event2/event.h>
 #include <event2/thread.h>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -48,17 +49,18 @@ RabbitMQPublisher::~RabbitMQPublisher() {
 		                  + std::to_string(connection_->queued()) + " bytes.");
 		std::this_thread::sleep_for(std::chrono::milliseconds(200));
 	}
-	std::this_thread::sleep_for(std::chrono::milliseconds(500));
+	std::this_thread::sleep_for(
+	    std::chrono::milliseconds(1500)); // wait for deliveries
 	if (channel_) {
 		channel_->close();
 	}
 	if (connection_) {
 		connection_->close();
 	}
-	stop_event_loop_();
 	channel_.reset();
 	connection_.reset();
 	handler_.reset();
+	stop_event_loop_();
 	logger->log_debug("[RabbitMQ Publisher] Destructor finished.");
 }
 
