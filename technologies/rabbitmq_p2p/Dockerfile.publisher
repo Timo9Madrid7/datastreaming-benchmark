@@ -1,0 +1,21 @@
+FROM rabbitmq_p2p_base
+
+# Install latest RabbitMQ from official repository
+RUN apt-get update \
+    && apt-get install -y curl gnupg apt-transport-https \
+    && curl -1sLf "https://keys.openpgp.org/vks/v1/by-fingerprint/0A9AF2115F4687BD29803A206B73A36E6026DFCA" | gpg --dearmor > /usr/share/keyrings/com.rabbitmq.team.gpg \
+    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/com.rabbitmq.team.gpg] https://deb.rabbitmq.com/rabbitmq-erlang/debian bookworm main" > /etc/apt/sources.list.d/rabbitmq.list \
+    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/com.rabbitmq.team.gpg] https://deb.rabbitmq.com/rabbitmq-server/debian bookworm main" >> /etc/apt/sources.list.d/rabbitmq.list \
+    && apt-get update \
+    && apt-get install -y --fix-missing erlang-base erlang-asn1 erlang-crypto erlang-eldap erlang-ftp erlang-inets erlang-mnesia erlang-os-mon erlang-parsetools erlang-public-key erlang-runtime-tools erlang-snmp erlang-ssl erlang-syntax-tools erlang-tftp erlang-tools erlang-xmerl \
+    && apt-get install -y --fix-missing rabbitmq-server \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN chmod +x /app/technologies/rabbitmq_p2p/entrypoint_pub.sh
+
+# Set working directory
+WORKDIR /app/build/core/applications
+
+# Run the publisher app
+ENTRYPOINT ["/app/technologies/rabbitmq_p2p/entrypoint_pub.sh"]
+CMD [ "INFO", "DEBUG", "STUDY", "ERROR" ]
