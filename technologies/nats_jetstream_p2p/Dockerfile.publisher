@@ -1,0 +1,11 @@
+FROM nats_jetstream_p2p_base
+
+# Install nats-server
+RUN curl -fsSL https://binaries.nats.dev/nats-io/nats-server/v2@latest | sh \
+    && mv nats-server /usr/local/bin/
+
+RUN chmod +x /app/technologies/nats_jetstream_p2p/entrypoint_pub.sh
+
+WORKDIR /app/build/core/applications
+ENTRYPOINT ["/app/technologies/nats_jetstream_p2p/entrypoint_pub.sh"]
+CMD [ "INFO", "DEBUG", "STUDY", "ERROR" ]
