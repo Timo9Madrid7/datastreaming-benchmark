@@ -1,30 +1,37 @@
 #ifndef ZEROMQP2P_CONSUMER_HPP
 #define ZEROMQP2P_CONSUMER_HPP
 
-#include "IConsumer.hpp"
-#include <zmq.hpp>
+#include <memory>
 #include <string>
-#include <sstream>
-#include <set>
-#include <iostream>
+#include <zmq.hpp>
+
+#include "Deserializer.hpp"
+#include "IConsumer.hpp"
 #include "Logger.hpp"
 
+
+struct Payload;
+
 class ZeroMQP2PConsumer : public IConsumer {
-private:
-    zmq::context_t context;
-    zmq::socket_t subscriber;
-    std::set<std::string> unique_publishers;
+  private:
+	zmq::context_t context;
+	zmq::socket_t subscriber;
 
-public:
-    ZeroMQP2PConsumer(std::shared_ptr<Logger> logger);
-    ~ZeroMQP2PConsumer();
+	utils::Deserializer deserializer_;
+	std::atomic<bool> stop_receiving_{false};
 
-    void initialize() override;
-    void subscribe(const std::string &topic) override;
-    Payload receive_message() override;
-    Payload deserialize(const std::string& raw_message) override;
+  public:
+	ZeroMQP2PConsumer(std::shared_ptr<Logger> logger);
+	~ZeroMQP2PConsumer();
 
-    void log_configuration() override;
+	void initialize() override;
+	void subscribe(const std::string &topic) override;
+	void start_loop() override;
+	bool deserialize(const void *raw_message, size_t len, std::string &topic,
+	                 Payload &out);
+	bool deserialize_id(const void *raw_message, size_t len, std::string &topic,
+	                    Payload &out);
+	void log_configuration() override;
 };
 
 #endif // ZEROMQP2P_CONSUMER_HPP

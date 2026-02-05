@@ -22,13 +22,13 @@ elseif(UNIX)
 endif()
 
 
-target_include_directories(zeromq_p2p_technology PUBLIC
+target_include_directories(zeromq_p2p_technology PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${ZMQ_INCLUDE_DIR}
+    ${CMAKE_SOURCE_DIR}/third_party_libs/spsc_queue/
 )
 
 target_link_libraries(zeromq_p2p_technology PRIVATE
-    core-interfaces
     factories
     ${ZMQ_LIBRARY}
 )

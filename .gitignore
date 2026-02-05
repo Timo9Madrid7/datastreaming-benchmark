@@ -19,6 +19,9 @@ cmake_install.cmake
 Makefile
 build/
 
+# Ignore clangd cache files
+.cache
+
 # Ignore VS Code workspace settings
 .vscode/
 *.code-workspace
@@ -39,6 +42,8 @@ docker-compose.override.yml
 *.puml
 *.csv
 *.json
+logs/
+logs_*/
 
 # Ignore Python virtual environments (if used for data processing)
 venv/
@@ -47,17 +52,18 @@ __pycache__/
 
 # Ignore CSV and benchmarking results
 results/*.csv
-logs/
 test_scenarios/
 
 # Ignore environment-specific files
 .env
 
+diagrams/
 benchmark_scenarios.json
 test_scenarios/complete_tests.json
 test_scenarios/quick_test.json
 benchmark_scenarios.json
-build_all_images.bat
+build_all_images.*
+clean_log_tech.bat
 analyses/.ipynb_checkpoints/resources_stats-checkpoint.ipynb
 test_scenarios/complete_tests.json
 test_scenarios/quick_test.json

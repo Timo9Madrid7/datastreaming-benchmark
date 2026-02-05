@@ -1,16 +1,17 @@
-#include "PublisherFactory.hpp"
+#include "Factory.hpp"
+#include "IConsumer.hpp"
 #include "./ZeroMQP2PPublisher.hpp"
-#include "ConsumerFactory.hpp"
 #include "./ZeroMQP2PConsumer.hpp"
+#include "IPublisher.hpp"
 
 extern "C" void register_technology(std::shared_ptr<Logger> logger) {
-    PublisherFactory::registerPublisher("zeromq_p2p", [](std::shared_ptr<Logger> logger) -> std::unique_ptr<IPublisher> {
+    Factory<IPublisher>::registerClient("zeromq_p2p", [](std::shared_ptr<Logger> logger) -> std::unique_ptr<IPublisher> {
         return std::make_unique<ZeroMQP2PPublisher>(logger);
     });
-    ConsumerFactory::registerConsumer("zeromq_p2p", [](std::shared_ptr<Logger> logger) -> std::unique_ptr<IConsumer> {
+    Factory<IConsumer>::registerClient("zeromq_p2p", [](std::shared_ptr<Logger> logger) -> std::unique_ptr<IConsumer> {
         return std::make_unique<ZeroMQP2PConsumer>(logger);
     });
     logger->log_debug("[ZeroMQP2P Registration] Registered creators in factories");
-    PublisherFactory::debug_print_registry(logger);
-    ConsumerFactory::debug_print_registry(logger);
+    Factory<IPublisher>::debug_print_registry(logger);
+    Factory<IConsumer>::debug_print_registry(logger);
 }

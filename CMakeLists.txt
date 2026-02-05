@@ -19,9 +19,10 @@ endif()
 # Add subdirectories
 add_subdirectory(core)
 add_subdirectory(core/applications)
+add_subdirectory(core/tests)
 
 # Maybe wrap these repeated if-blocks in a function/macro or table later
-foreach(TECH zeromq_p2p kafka)
+foreach(TECH nats_p2p arrowflight_p2p arrowflight_bin_p2p kafka_p2p zeromq_p2p rabbitmq_p2p)
     if(EXISTS "${CMAKE_SOURCE_DIR}/technologies/${TECH}")
         message(STATUS "Including ${TECH} technology")
         add_subdirectory("technologies/${TECH}")

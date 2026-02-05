@@ -1,28 +1,41 @@
-import docker
-import uuid
 import time
-from confluent_kafka.admin import AdminClient, NewTopic
-import concurrent.futures
+import uuid
+
+import docker
+from confluent_kafka.admin import AdminClient
+from typing_extensions import override
 
 from ..technology_manager import TechnologyManager, register_technology
+from ..utils.logger import logger
 
-KAFKA_IMAGE = "bitnami/kafka:latest"
+KAFKA_IMAGE = "bitnamilegacy/kafka:latest"
 KAFKA_CONTAINER_NAME = "benchmark_kafka_broker"
 KAFKA_PORT = 9092
 CONTROLLER_PORT = 9093
 
+
 @register_technology("kafka")
 class KafkaManager(TechnologyManager):
-    
-    def __init__(self, tech_path, network_name = "benchmark_network", broker_host = KAFKA_CONTAINER_NAME, broker_port = KAFKA_PORT, controller_port = CONTROLLER_PORT):
+
+    def __init__(
+        self,
+        tech_path,
+        network_name="benchmark_network",
+        broker_host=KAFKA_CONTAINER_NAME,
+        broker_port=KAFKA_PORT,
+        controller_port=CONTROLLER_PORT,
+        kafka_image=KAFKA_IMAGE,
+    ) -> None:
         TechnologyManager.__init__(self, tech_path, network_name)
         self.client = docker.from_env()
         self.container = None
         self.broker_host = broker_host
         self.broker_port = broker_port
         self.controller_port = controller_port
-        
-    def setup_tech(self):
+        self.kafka_image = kafka_image
+
+    @override
+    def setup_tech(self) -> None:
         # existing = None
         # try:
         #     existing = self.client.containers.get(self.broker_host)
@@ -33,15 +46,23 @@ class KafkaManager(TechnologyManager):
         #     self.reset_broker_state()
         # else:
         self.start_broker()
-    
-    def reset_tech(self):
+
+    @override
+    def reset_tech(self) -> None:
         self.reset_broker_state()
-    
-    def teardown_tech(self):
+
+    @override
+    def teardown_tech(self) -> None:
         self.stop_broker()
 
-    def start_broker(self):
-        print("[KM] Starting new Kafka broker...")
+    def start_broker(self) -> str:
+        """
+        Starts a Kafka broker container.
+
+        Returns:
+            str: The bootstrap server address of the started Kafka broker.
+        """
+        logger.info("Starting new Kafka broker...")
         cluster_id = uuid.uuid4().hex
         env_vars = {
             "KAFKA_CFG_PROCESS_ROLES": "broker,controller",
@@ -51,73 +72,88 @@ class KafkaManager(TechnologyManager):
             "KAFKA_CFG_ADVERTISED_LISTENERS": f"PLAINTEXT://{self.broker_host}:9092",
             "KAFKA_CFG_CONTROLLER_LISTENER_NAMES": "CONTROLLER",
             "KAFKA_KRAFT_CLUSTER_ID": cluster_id,
-            "ALLOW_PLAINTEXT_LISTENER": "yes"
+            "ALLOW_PLAINTEXT_LISTENER": "yes",
         }
 
-        print("[KM] Starting Kafka broker container...")
+        logger.debug(f"Starting Kafka broker container: {env_vars}")
 
         self.container = self.client.containers.run(
-            image=KAFKA_IMAGE,
-            name=KAFKA_CONTAINER_NAME,
+            image=self.kafka_image,
+            name=self.broker_host,
             environment=env_vars,
             ports={
                 f"{self.broker_port}/tcp": self.broker_port,
-                f"{self.controller_port}/tcp": self.controller_port
+                f"{self.controller_port}/tcp": self.controller_port,
             },
             detach=True,
             network=self.network_name,  # TODO or use a shared network if your benchmark containers need it
-            remove=True  # auto-remove container on stop
+            remove=True,  # auto-remove container on stop
         )
 
         self._wait_for_readiness()
 
-        print(f"[KM] Kafka broker is up and running at localhost:{self.broker_port}")
+        logger.info(f"Kafka broker is up and running at localhost:{self.broker_port}")
         return f"localhost:{self.broker_port}"
 
-    def stop_broker(self):
+    def stop_broker(self) -> None:
         try:
             existing = self.client.containers.get(self.broker_host)
-            print("[KM] Stopping existing Kafka broker container...")
+            logger.info("Stopping existing Kafka broker container...")
             # existing.stop()
             existing.remove(force=True)
         except docker.errors.NotFound:
             pass  # Nothing to stop
 
-    def _wait_for_readiness(self, timeout=30):
-        print("[KM] Waiting for Kafka broker to become ready...")
+    def _wait_for_readiness(self, timeout: int = 30) -> None:
+        """
+        Waits for the Kafka broker to become ready.
+
+        Args:
+            timeout (int, optional): Maximum time to wait for readiness in seconds. Defaults to 30.
+
+        Raises:
+            TimeoutError: If the broker does not become ready within the timeout period.
+        """
+        logger.info("Waiting for Kafka broker to become ready...")
         start = time.time()
         while time.time() - start < timeout:
             logs = self.container.logs().decode("utf-8")
-            if "Kafka startTimeMs" in logs or "started (kafka.server.KafkaServer)" in logs:
+            if (
+                "Kafka startTimeMs" in logs
+                or "started (kafka.server.KafkaServer)" in logs
+            ):
                 return
             time.sleep(1)
         raise TimeoutError("Kafka broker did not become ready in time.")
 
-    def reset_broker_state(self):
+    def reset_broker_state(self) -> None:
         """Delete all non-internal topics from the broker."""
-        print("[KM] Resetting Kafka broker state...")
+        logger.info("Resetting Kafka broker state...")
 
-        admin_conf = {'bootstrap.servers': "localhost:9092"}
+        admin_conf = {"bootstrap.servers": "localhost:9092"}
         admin_client = AdminClient(admin_conf)
 
         # Fetch list of topics
         metadata = admin_client.list_topics(timeout=10)
         topics_to_delete = [
-            t for t in metadata.topics.keys()
+            t
+            for t in metadata.topics.keys()
             if not t.startswith("__")  # Exclude internal topics
         ]
 
         if not topics_to_delete:
-            print("[KM] No topics to delete.")
+            logger.info("No topics to delete.")
             return
 
-        print(f"[KM] Deleting topics: {topics_to_delete}")
-        delete_futures = admin_client.delete_topics(topics_to_delete, operation_timeout=30)
+        logger.debug(f"Deleting topics: {topics_to_delete}")
+        delete_futures = admin_client.delete_topics(
+            topics_to_delete, operation_timeout=30
+        )
 
         # Wait for each deletion to complete
         for topic, future in delete_futures.items():
             try:
                 future.result()
-                print(f"[KM] Deleted topic: {topic}")
+                logger.debug(f"Deleted topic: {topic}")
             except Exception as e:
-                print(f"[KM] Failed to delete topic {topic}: {e}")
+                logger.error(f"Failed to delete topic {topic}: {e}")

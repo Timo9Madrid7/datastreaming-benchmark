@@ -1,213 +1,265 @@
 #include "ZeroMQP2PConsumer.hpp"
-#include <iostream>
-#include <thread>
+
 #include <cstdlib>
+#include <cstring>
+#include <memory>
+#include <optional>
 #include <sstream>
-#include "ConsumerFactory.hpp"
+#include <stdexcept>
+#include <string>
+#include <sys/types.h>
+#include <unordered_set>
+#include <utility>
+#include <zmq.h>
+#include <zmq.hpp>
 
-Payload ZeroMQP2PConsumer::deserialize(const std::string& raw_message) {
-    const char* data = raw_message.data();
-    size_t offset = 0;
+#include "Payload.hpp"
+#include "Utils.hpp"
 
-    // 1. Topic length and content (skip over it)
-    uint8_t topic_len = static_cast<uint8_t>(data[offset]);
-    offset += 1;
+bool ZeroMQP2PConsumer::deserialize(const void *raw_message, size_t len,
+                                    std::string &topic, Payload &out) {
+	const char *data = static_cast<const char *>(raw_message);
+	size_t offset = 0;
 
-    if (raw_message.size() < offset + topic_len) {
-        throw std::runtime_error("Invalid message: incomplete topic");
-    }
+	// Topic length & Topic
+	uint8_t topic_len;
+	std::memcpy(&topic_len, data + offset, sizeof(uint8_t));
+	offset += sizeof(uint8_t);
+	topic.assign(data + offset, topic_len);
+	offset += topic_len;
 
-    std::string topic(data + offset, topic_len);
-    offset += topic_len;
+	if (Payload::deserialize(data + offset, len - offset, out) == false) {
+		logger->log_error("[ZeroMQP2P Consumer] Deserialization failed.");
+		return false;
+	}
 
-    // 2. Message ID length and content
-    uint16_t id_len;
-    std::memcpy(&id_len, data + offset, sizeof(uint16_t));
-    offset += sizeof(uint16_t);
-
-    if (raw_message.size() < offset + id_len) {
-        throw std::runtime_error("Invalid message: incomplete message_id");
-    }
-
-    std::string message_id(data + offset, id_len);
-    offset += id_len;
-
-    // 3. Data size
-    uint64_t data_size;
-    std::memcpy(&data_size, data + offset, sizeof(uint64_t));
-    offset += sizeof(uint64_t);
-
-    std::vector<uint8_t> payload_data;
-    logger->log_debug("[ZeroMQP2P Consumer] Deserializing message from topic: " + topic + " with ID: " + message_id +
-                     ", Data size: " + std::to_string(data_size) + " bytes");
-
-    if (raw_message.size() < offset + data_size) {
-        if (message_id.find(TERMINATION_SIGNAL) != std::string::npos) {
-            payload_data = std::vector<uint8_t>{};
-            data_size = 0;
-        }
-        else{
-            throw std::runtime_error("Invalid message: data section incomplete");
-        }
-    }
-    else {
-        payload_data = std::vector<uint8_t>(data + offset, data + offset + data_size);
-    }
-
-    Payload p;
-    p.message_id = message_id;
-    p.data_size = data_size;
-    p.data = std::move(payload_data);
-    p.kind = PayloadKind::FLAT; // Hardcoded until dynamic handling is needed
-
-    return p;
+	return true;
 }
 
-ZeroMQP2PConsumer::ZeroMQP2PConsumer(std::shared_ptr<Logger> logger)
-    try : IConsumer(logger), context(1), subscriber(context, ZMQ_SUB) {
-        logger->log_debug("[ZeroMQP2P Consumer] Constructor finished");
-    } catch (const zmq::error_t& e) {
-        std::cerr << "[ZeroMQP2P Consumer] Constructor failed: " << e.what() << std::endl;
+bool ZeroMQP2PConsumer::deserialize_id(const void *raw_message, size_t len,
+                                       std::string &topic, Payload &out) {
+	const char *data = static_cast<const char *>(raw_message);
+	size_t offset = 0;
+
+	// Topic length & Topic
+	uint8_t topic_len;
+	std::memcpy(&topic_len, data + offset, sizeof(uint8_t));
+	offset += sizeof(uint8_t);
+	topic.assign(data + offset, topic_len);
+	offset += topic_len;
+
+	if (Payload::deserialize_id(data + offset, len - offset, out) == false) {
+		logger->log_error("[ZeroMQP2P Consumer] Deserialization failed.");
+		return false;
+	}
+
+	return true;
+}
+
+ZeroMQP2PConsumer::ZeroMQP2PConsumer(std::shared_ptr<Logger> logger) try
+    : IConsumer(logger), context(1), subscriber(context, ZMQ_SUB),
+      deserializer_(logger) {
+	subscriber.set(zmq::sockopt::rcvtimeo, 10000);
+	subscriber.set(zmq::sockopt::rcvhwm, 5000);
+	logger->log_debug("[ZeroMQP2P Consumer] Constructor finished");
+} catch (const zmq::error_t &e) {
+	std::string err_msg =
+	    "[ZeroMQP2P Consumer] Constructor failed: " + std::string(e.what());
+	logger->log_error(err_msg);
+	throw std::runtime_error(err_msg);
 }
 
 ZeroMQP2PConsumer::~ZeroMQP2PConsumer() {
-    subscriber.close();
-    context.close();
+	stop_receiving_ = true;
+	deserializer_.stop();
+
+	subscriber.close();
+	context.close();
 }
 
 void ZeroMQP2PConsumer::initialize() {
-    logger->log_study("Initializing");
-    const char* vendpoint = std::getenv("CONSUMER_ENDPOINT");
-    const char* vtopics = std::getenv("TOPICS");
-    std::string consumer_id = std::getenv("CONTAINER_ID");
-    if (!vendpoint) {
-        unique_publishers.insert("zeromq_p2p-P" + consumer_id.substr(1));
-        logger->log_debug("[ZeroMQP2P Consumer] CONSUMER_ENDPOINT not set, default to publisher with same numerical id: zeromq_p2p-P" + consumer_id.substr(1));
-    }
-    else{
-        if (!vtopics) {
-            subscribed_streams.insert({"zeromq_p2p-P" + consumer_id.substr(1), consumer_id.substr(1)});
-            subscribe(consumer_id.substr(1));
-            logger->log_debug("[ZeroMQP2P Consumer] TOPICS not set, default to publisher with same numerical id: " + consumer_id.substr(1));
-        }
-        else{
-            std::istringstream topics(vtopics);
-            std::string topic;
-            std::istringstream publishers(vendpoint);
-            std::string publisher;
-            // logger->log_debug("[ZeroMQP2P Consumer] Subscribing to topic list: " + std::to_string(vtopics));
-            while(std::getline(topics, topic, ',')){
-                std::getline(publishers, publisher, ',');
-                if(!publisher.empty()){
-                    unique_publishers.insert(publisher);
-                }
-                logger->log_debug("[ZeroMQP2P Consumer] Handling subscription to topic " + topic);
-                if(!topic.empty()){
-                    logger->log_info("[ZeroMQP2P Consumer] Connecting to stream ("+ publisher + "," + topic + ")");
-                    subscribe(topic);
-                    subscribed_streams.insert({publisher, topic});
-                }
-            }
-        }
-    }
+	// assume **all** default ports 5555 if not specified
+	const std::string port =
+	    utils::get_env_var_or_default("CONSUMER_PORT", "5555");
 
-    try {
-        for(const auto& publisher : unique_publishers){
-            logger->log_debug("[ZeroMQP2P Consumer] Connecting to publisher " + publisher);
-            subscriber.connect("tcp://" + publisher + ":5555");
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+	const std::optional<std::string> vendpoints =
+	    utils::get_env_var("CONSUMER_ENDPOINT");
+	const std::optional<std::string> consumer_id =
+	    utils::get_env_var("CONTAINER_ID");
+	const std::optional<std::string> vtopics = utils::get_env_var("TOPICS");
+	std::string err_msg;
+	if (!vendpoints || vendpoints.value().empty()) {
+		err_msg = "[ZeroMQP2P Consumer] Missing required environment variable "
+		          "CONSUMER_ENDPOINT.";
+		logger->log_error(err_msg);
+		throw std::runtime_error(err_msg);
+	}
+	if (!consumer_id || consumer_id.value().empty()) {
+		err_msg = "[ZeroMQP2P Consumer] Missing required environment variable "
+		          "CONTAINER_ID.";
+		logger->log_error(err_msg);
+		throw std::runtime_error(err_msg);
+	}
+	if (!vtopics || vtopics.value().empty()) {
+		err_msg = "[ZeroMQP2P Consumer] Missing required environment variable "
+		          "TOPICS.";
+		logger->log_error(err_msg);
+		throw std::runtime_error(err_msg);
+	}
 
-        logger->log_debug("[ZeroMQP2P Consumer] Connected and subscribed.");
-    } catch (const zmq::error_t &e) {
-        logger->log_error("[ZeroMQP2P Consumer] Initialization failed: " + std::string(e.what()));
-    }
-    logger->log_study("Initialized");
-    log_configuration();
+	std::string topic;
+	std::string publisher;
+	std::istringstream topics(vtopics.value_or(""));
+	std::istringstream publishers(vendpoints.value_or(""));
+	std::unordered_set<std::string> unique_pub_topics;
+	while (std::getline(topics, topic, ',')) {
+		std::getline(publishers, publisher, ',');
+		if (publisher.empty()) {
+			logger->log_info(
+			    "[ZeroMQP2P Consumer] Empty publisher found for topic " + topic
+			    + ", skipping subscription.");
+			continue;
+		}
+		if (topic.empty()) {
+			logger->log_info(
+			    "[ZeroMQP2P Consumer] Empty topic found for publisher "
+			    + publisher + ", skipping subscription.");
+			continue;
+		}
+
+		logger->log_debug("[ZeroMQP2P Consumer] Handling subscription to topic "
+		                  + topic + " from publisher " + publisher);
+
+		if (unique_pub_topics.insert(publisher + ":" + topic).second) {
+			logger->log_info("[ZeroMQP2P Consumer] Subscribing to topic: "
+			                 + topic + " from publisher: " + publisher);
+			subscribe(topic);
+		}
+	}
+
+	logger->log_debug("[ZeroMQP2P Consumer] Subscription list will have size "
+	                  + std::to_string(subscribed_streams.get()));
+	try {
+		for (const auto &pub_topic : unique_pub_topics) {
+			auto delimiter_pos = pub_topic.find(':');
+			std::string publisher = pub_topic.substr(0, delimiter_pos);
+			subscriber.connect("tcp://" + publisher + ":" + port);
+			logger->log_info("[ZeroMQP2P Consumer] Connected to publisher: "
+			                 + publisher + " on port: " + port);
+		}
+	} catch (const zmq::error_t &e) {
+		err_msg = "[ZeroMQP2P Consumer] Initialization failed: "
+		    + std::string(e.what());
+		logger->log_error(err_msg);
+		throw std::runtime_error(err_msg);
+	}
+
+	logger->log_info(
+	    "[ZeroMQP2P Consumer] Consumer initialized and connected.");
+	log_configuration();
 }
 
 void ZeroMQP2PConsumer::subscribe(const std::string &topic) {
-    logger->log_debug("[ZeroMQP2P Consumer] Subscribing to topic: " + topic);
-    subscriber.set(zmq::sockopt::subscribe, std::string(1, static_cast<char>(topic.size())) + topic);
-    // Set a timeout for receiving messages (10s)
-    subscriber.set(zmq::sockopt::rcvtimeo, 10000);
+	logger->log_debug("[ZeroMQP2P Consumer] Subscribing to topic: " + topic);
+	subscriber.set(zmq::sockopt::subscribe,
+	               std::string(1, static_cast<char>(topic.size())) + topic);
+	// subscribed_streams counter + 1
+	subscribed_streams.inc();
 }
 
-Payload ZeroMQP2PConsumer::receive_message() {
-    zmq::message_t zmq_message;
-    Payload message;
+void ZeroMQP2PConsumer::start_loop() {
+	deserializer_.start(
+	    [this](const void *data, size_t len, std::string &topic, Payload &out) {
+		    return this->deserialize(data, len, topic, out);
+	    },
+	    [this](const Payload &payload, const std::string & /*topic*/,
+	           size_t /*raw_len*/) {
+		    if (payload.kind == PayloadKind::TERMINATION) {
+			    subscribed_streams.dec();
+			    logger->log_info("[ZeroMQP2P Consumer] Termination signal "
+			                     "received for message ID: "
+			                     + payload.message_id);
+			    if (subscribed_streams.get() == 0) {
+				    logger->log_info("[ZeroMQP2P Consumer] All streams "
+				                     "terminated. Exiting.");
+				    stop_receiving_ = true;
+			    }
+			    logger->log_info(
+			        "[ZeroMQP2P Consumer] Remaining subscribed streams: "
+			        + std::to_string(subscribed_streams.get()));
+		    }
+	    });
 
-    try {
-        auto result = subscriber.recv(zmq_message, zmq::recv_flags::none);
-        if (!result) {
-            logger->log_error("[ZeroMQP2P Consumer] Failed to receive message!");
-            return message;
-        }
+	while (!stop_receiving_) {
+		try {
+			zmq::message_t msg;
+			auto result = subscriber.recv(msg, zmq::recv_flags::none);
+			if (!result) {
+				logger->log_info(
+				    "[ZeroMQP2P Consumer] Receive timed out, retrying...");
+				continue;
+			}
 
-        std::string raw(static_cast<const char*>(zmq_message.data()), zmq_message.size());
-        message = deserialize(raw);
-        // Recover topic from the raw message
-        const char* data = raw.data();
-        size_t offset = 0;
-        // 1. Topic length and content (skip over it)
-        uint8_t topic_len = static_cast<uint8_t>(data[offset]);
-        offset += 1;
-        if (raw.size() < offset + topic_len) {
-            throw std::runtime_error("Invalid message: incomplete topic");
-        }
-        std::string topic(data + offset, topic_len);
-        logger->log_info("[ZeroMQP2P Consumer] Received message ID: " + message.message_id +
-            ", Size: " + std::to_string(message.data_size) + " bytes");
-        logger->log_study("Reception," + message.message_id +
-            "," + std::to_string(message.data_size) + 
-            "," + topic + 
-            "," + std::to_string(zmq_message.size()));
+			const void *data_ptr = msg.data();
+			const size_t data_size = msg.size();
 
-        // Poison pill handling based on ID
-        if (message.message_id.find(TERMINATION_SIGNAL) != std::string::npos) {
-            std::string source = message.message_id.substr(0, message.message_id.find(":"));
+			Payload payload;
+			std::string topic;
+			if (!deserialize_id(data_ptr, data_size, topic, payload)) {
+				logger->log_error(
+				    "[ZeroMQP2P Consumer] Deserialization failed");
+				continue;
+			}
 
-            terminated_streams.insert({source, topic});
+			logger->log_study("Reception," + payload.message_id + "," + topic);
 
-            logger->log_info("[ZeroMQP2P Consumer] Termination signal from source: " + source +
-                             " on topic: " + topic);
-            logger->log_debug("[ZeroMQP2P Consumer] Streams closed: " +
-                              std::to_string(terminated_streams.size()) + "/" +
-                              std::to_string(subscribed_streams.size()));
+			auto holder = std::make_shared<zmq::message_t>(std::move(msg));
+			utils::Deserializer::Item item;
+			item.holder = holder;
+			item.data = holder->data();
+			item.len = holder->size();
+			item.topic = topic;
+			item.message_id = payload.message_id;
+			if (!deserializer_.enqueue(std::move(item))) {
+				logger->log_error("[ZeroMQP2P Consumer] Deserializer queue "
+				                  "full; dropping message.");
+			}
+		} catch (const zmq::error_t &e) {
+			logger->log_error("[ZeroMQP2P Consumer] Receive failed: "
+			                  + std::string(e.what()));
+			continue;
+		}
+	}
 
-            return Payload::make(message.message_id.substr(0, message.message_id.find(':')) + "-" + topic, 
-                                 0, 0, PayloadKind::TERMINATION);
-        }
-
-        return message;
-
-    } catch (const zmq::error_t& e) {
-        logger->log_error("[ZeroMQP2P Consumer] Receive failed: " + std::string(e.what()));
-        return message;
-    }
+	deserializer_.stop();
 }
 
-void ZeroMQP2PConsumer::log_configuration(){
-    logger->log_config("[ZeroMQP2P Consumer] [CONFIG_BEGIN]" );
+void ZeroMQP2PConsumer::log_configuration() {
+	logger->log_config("[ZeroMQP2P Consumer] [CONFIG_BEGIN]");
 
-    logger->log_config("[CONFIG] socket_type=ZMQ_SUB" ); // Adjust if needed
-    logger->log_config("[CONFIG] socket_id=" + std::to_string(subscriber.get(zmq::sockopt::fd)) );
-    logger->log_config("[CONFIG] endpoint=" + std::string(std::getenv("CONSUMER_ENDPOINT")) );
-    logger->log_config("[CONFIG] topics=" + std::string(std::getenv("TOPICS")) );
-    int hwm, linger, rcv_buffer;
-    size_t sz = sizeof(int);
+	logger->log_config("[CONFIG] socket_type=ZMQ_SUB"); // Adjust if needed
+	logger->log_config("[CONFIG] socket_id="
+	                   + std::to_string(subscriber.get(zmq::sockopt::fd)));
+	logger->log_config("[CONFIG] endpoint="
+	                   + std::string(std::getenv("CONSUMER_ENDPOINT")));
+	logger->log_config("[CONFIG] topics=" + std::string(std::getenv("TOPICS")));
+	int hwm, linger, rcv_buffer;
+	size_t sz = sizeof(int);
 
-    zmq_getsockopt(subscriber, ZMQ_RCVHWM, &hwm, &sz);
-    zmq_getsockopt(subscriber, ZMQ_LINGER, &linger, &sz);
-    zmq_getsockopt(subscriber, ZMQ_RCVTIMEO, &rcv_buffer, &sz);
+	zmq_getsockopt(subscriber, ZMQ_RCVHWM, &hwm, &sz);
+	zmq_getsockopt(subscriber, ZMQ_LINGER, &linger, &sz);
+	zmq_getsockopt(subscriber, ZMQ_RCVTIMEO, &rcv_buffer, &sz);
 
-    logger->log_config("[CONFIG] ZMQ_RCVHWM=" + std::to_string(hwm) );
-    logger->log_config("[CONFIG] ZMQ_LINGER=" + std::to_string(linger) );
-    logger->log_config("[CONFIG] ZMQ_RCVBUF=" + std::to_string(rcv_buffer) );
+	logger->log_config("[CONFIG] ZMQ_RCVHWM=" + std::to_string(hwm));
+	logger->log_config("[CONFIG] ZMQ_LINGER=" + std::to_string(linger));
+	logger->log_config("[CONFIG] ZMQ_RCVTIMEO=" + std::to_string(rcv_buffer));
 
-    int major, minor, patch;
-    zmq_version(&major, &minor, &patch);
-    logger->log_config("[CONFIG] zmq_version=" + std::to_string(major) + "." + std::to_string(minor) + "." + std::to_string(patch) );
+	int major, minor, patch;
+	zmq_version(&major, &minor, &patch);
+	logger->log_config("[CONFIG] zmq_version=" + std::to_string(major) + "."
+	                   + std::to_string(minor) + "." + std::to_string(patch));
 
-    logger->log_config("[ZeroMQP2P Consumer] [CONFIG_END]" );
+	logger->log_config("[ZeroMQP2P Consumer] [CONFIG_END]");
 }
+
+// Deserialization worker is implemented by utils::Deserializer

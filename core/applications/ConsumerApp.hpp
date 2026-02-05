@@ -1,35 +1,31 @@
-#ifndef ICONSUMER_APP_HPP
-#define ICONSUMER_APP_HPP
+#pragma once
 
-#include <string>
-#include <iostream>
-#include <thread>
-#include <fstream>
-#include <chrono>
+#include <memory>
 
-#include "Logger.hpp"
-#include "ConsumerFactory.hpp"
-#include "TechnologyLoader.hpp"
 #include "IConsumer.hpp"
+#include "Logger.hpp"
 
 class ConsumerApp {
-protected:
-    std::string id;
-    std::string topics;
-    
-    std::shared_ptr<Logger> logger;
+  protected:
+	std::shared_ptr<Logger> logger;
+	std::unique_ptr<IConsumer> consumer;
 
-    std::unique_ptr<IConsumer> consumer;
+  public:
+	ConsumerApp(Logger::LogLevel log_level = Logger::LogLevel::INFO);
+	~ConsumerApp() = default;
 
-public:
-    ConsumerApp(Logger::LogLevel log_level = Logger::LogLevel::INFO);
-    ~ConsumerApp() = default;
+	/**
+	@brief Creates a consumer based on the TECHNOLOGY environment variable.
+	@throws std::runtime_error if the TECHNOLOGY environment variable is not set
+	        or if the consumer creation fails.
+	*/
+	void create_consumer();
 
-    // Factory call to Create Consumer
-    void create_consumer();
-
-    // Initializes and runs the consumer logic
-    void run();
+	/**
+	@brief Runs the consumer application, initializing the consumer and
+	       continuously receiving messages.
+	@throws std::runtime_error if initialization fails or if message
+	        reception encounters an error.
+	*/
+	void run();
 };
-
-#endif // ICONSUMER_APP_HPP

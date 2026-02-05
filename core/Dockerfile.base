@@ -1,17 +1,23 @@
-# Expected name of the image: core_image
+# Expected name of the image: core_base
 # Base image with system-level dependencies
 FROM ubuntu:22.04
 
 # Install common build tools and libraries
 RUN apt-get update && \
-    apt-get install -y build-essential cmake g++ ninja-build && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get install -y \
+    build-essential cmake g++ ninja-build \
+    libspdlog-dev \
+    git curl ca-certificates \
+    iproute2 \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 # Define common working directory
 WORKDIR /app
 
 # Copy shared core files and CMakeLists.txt
 COPY ./core /app/core
+COPY ./third_party_libs /app/third_party_libs
 COPY ./CMakeLists.txt /app/CMakeLists.txt
 
 RUN mkdir /app/build 

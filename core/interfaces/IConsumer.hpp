@@ -1,47 +1,72 @@
-#ifndef ICONSUMER_HPP
-#define ICONSUMER_HPP
+#pragma once
 
-#include <string>
-#include <set>
+#include <atomic>
+#include <cstddef>
 #include <memory>
+#include <string>
+#include <sys/types.h>
+
 #include "Logger.hpp"
-#include "Payload.h"
 
 class IConsumer {
-protected:
-    std::shared_ptr<Logger> logger;
-    std::set<std::pair<std::string, std::string>> terminated_streams;
-    std::set<std::pair<std::string, std::string>> subscribed_streams;
+  private:
+	/**
+	@brief Logs the configuration of the consumer.
+	*/
+	virtual void log_configuration() = 0;
 
-private:
-    // Log consumer configuration during runtime
-    virtual void log_configuration() = 0;
+	/**
+	@brief A thread-safe counter for tracking the number of subscribed streams.
+	*/
+	class StreamCounter {
+	  public:
+		void inc() {
+			value.fetch_add(1, std::memory_order_relaxed);
+		}
 
-    // Deserializes a message from a string format to a Payload object
-    virtual Payload deserialize(const std::string& raw_message) = 0;
+		void dec() {
+			size_t cur = value.load(std::memory_order_relaxed);
+			while (cur > 0) {
+				if (value.compare_exchange_weak(cur, cur - 1,
+				                                std::memory_order_relaxed)) {
+					return;
+				}
+			}
+		}
 
-public:
-    IConsumer(std::shared_ptr<Logger> loggerp) {
-        logger = loggerp;
-    }
-    virtual ~IConsumer() = default;
+		size_t get() const {
+			return value.load(std::memory_order_relaxed);
+		}
 
-    // Initializes the consumer (e.g., connects to a broker, subscribes to a topic)
-    virtual void initialize() = 0;
+	  private:
+		std::atomic<size_t> value{0};
+	};
 
-    // Subscribes to a topic (if applicable)
-    virtual void subscribe(const std::string &topic) = 0;
+  protected:
+	std::shared_ptr<Logger> logger;
+	StreamCounter subscribed_streams;
 
-    // Receives a message (blocking or non-blocking depending on implementation)
-    virtual Payload receive_message() = 0;
+  public:
+	IConsumer(std::shared_ptr<Logger> loggerp) {
+		logger = loggerp;
+	}
+	virtual ~IConsumer() = default;
 
+	/**
+	@brief Initializes the consumer by connecting to the message broker and
+	setting up subscriptions.
+	*/
+	virtual void initialize() = 0;
 
-    int get_subscribed_streams_size() const {
-        return static_cast<int>(subscribed_streams.size());
-    }
-    int get_terminated_streams_size() const {
-        return static_cast<int>(terminated_streams.size());
-    }
+	/**
+	@brief Subscribes to a specific topic.
+	@param topic The topic to subscribe to.
+	*/
+	virtual void subscribe(const std::string &topic) = 0;
+
+	/**
+	@brief Starts receiving messages from the subscribed topics until all
+	streams have been terminated.
+	*/
+	virtual void start_loop() = 0;
 };
-
-#endif // ICONSUMER_HPP

@@ -1,33 +1,37 @@
-#ifndef IPUBLISHER_HPP
-#define IPUBLISHER_HPP
+#pragma once
 
-#include <string>
 #include <memory>
+#include <string>
+
 #include "Logger.hpp"
-#include "Payload.h"
+#include "Payload.hpp"
+
+struct Payload;
 
 class IPublisher {
-protected:
-    std::shared_ptr<Logger> logger;
-    
-private:
-    // Serializes a Payload object to a string format
-    virtual std::string serialize(const Payload& message) = 0;
+  protected:
+	std::shared_ptr<Logger> logger;
 
-    // Log publisher configuration during runtime
-    virtual void log_configuration() = 0;
+  private:
+	/**
+	@brief Logs the configuration of the publisher.
+	*/
+	virtual void log_configuration() = 0;
 
-public:
-    IPublisher(std::shared_ptr<Logger> loggerp) {
-        logger = loggerp;
-    }
-    virtual ~IPublisher() = default;
+  public:
+	IPublisher(std::shared_ptr<Logger> loggerp) {
+		logger = loggerp;
+	}
+	virtual ~IPublisher() = default;
 
-    // Initializes the publisher (e.g., connects to a broker)
-    virtual void initialize() = 0;
+	/**
+	@brief Initializes the publisher by connecting to the message broker.
+	*/
+	virtual void initialize() = 0;
 
-    // Sends a message
-    virtual void send_message(const Payload &message, std::string topic) = 0;
+	/**
+	@brief Sends a message to a specific topic.
+	@param message The Payload object to send.
+	*/
+	virtual void send_message(const Payload &message, std::string &topic) = 0;
 };
-
-#endif // IPUBLISHER_HPP
