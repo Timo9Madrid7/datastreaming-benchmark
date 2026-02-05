@@ -35,7 +35,8 @@ std::vector<std::string> split_csv(const std::string &value) {
 } // namespace
 
 NatsJetStreamPublisher::NatsJetStreamPublisher(std::shared_ptr<Logger> logger)
-    : IPublisher(std::move(logger)), connection_(nullptr, &natsConnection_Destroy),
+    : IPublisher(std::move(logger)),
+      connection_(nullptr, &natsConnection_Destroy),
       js_(nullptr, &jsCtx_Destroy) {
 	this->logger->log_info("[NATS JetStream Publisher] Created.");
 }
@@ -60,8 +61,9 @@ void NatsJetStreamPublisher::initialize() {
 	natsConnection *conn = nullptr;
 	natsStatus status = natsConnection_ConnectTo(&conn, nats_url_.c_str());
 	if (status != NATS_OK) {
-		throw std::runtime_error("[NATS JetStream Publisher] Failed to connect: "
-		                         + std::string(natsStatus_GetText(status)));
+		throw std::runtime_error(
+		    "[NATS JetStream Publisher] Failed to connect: "
+		    + std::string(natsStatus_GetText(status)));
 	}
 	connection_.reset(conn);
 
@@ -70,8 +72,9 @@ void NatsJetStreamPublisher::initialize() {
 	jsCtx *js = nullptr;
 	status = natsConnection_JetStream(&js, connection_.get(), &js_opts);
 	if (status != NATS_OK) {
-		throw std::runtime_error("[NATS JetStream Publisher] JetStream init failed: "
-		                         + std::string(natsStatus_GetText(status)));
+		throw std::runtime_error(
+		    "[NATS JetStream Publisher] JetStream init failed: "
+		    + std::string(natsStatus_GetText(status)));
 	}
 	js_.reset(js);
 
@@ -79,8 +82,8 @@ void NatsJetStreamPublisher::initialize() {
 	const std::string topics = utils::get_env_var_or_default("TOPICS", "");
 	const std::vector<std::string> topic_list = split_csv(topics);
 	if (topic_list.empty()) {
-		throw std::runtime_error(
-		    "[NATS JetStream Publisher] TOPICS is required to configure the stream.");
+		throw std::runtime_error("[NATS JetStream Publisher] TOPICS is "
+		                         "required to configure the stream.");
 	}
 	jsStreamConfig stream_cfg;
 	jsStreamConfig_Init(&stream_cfg);
@@ -103,8 +106,8 @@ void NatsJetStreamPublisher::initialize() {
 	} else if (jerr != JSStreamNameExistErr) {
 		throw std::runtime_error(
 		    "[NATS JetStream Publisher] Stream setup failed: "
-		    + std::string(natsStatus_GetText(status)) + ", jsErr="
-		    + std::to_string(static_cast<int>(jerr)));
+		    + std::string(natsStatus_GetText(status))
+		    + ", jsErr=" + std::to_string(static_cast<int>(jerr)));
 	}
 
 	logger->log_info("[NATS JetStream Publisher] Initialized.");
@@ -126,9 +129,12 @@ void NatsJetStreamPublisher::send_message(const Payload &message,
 
 	jsPubAck *ack = nullptr;
 	jsErrCode jerr = static_cast<jsErrCode>(0);
-	natsStatus status = js_Publish(
-	    &ack, js_.get(), subject.c_str(), serialized.data(),
-	    static_cast<int>(serialized.size()), nullptr, &jerr);
+	// natsStatus status = js_Publish(
+	//     &ack, js_.get(), subject.c_str(), serialized.data(),
+	//     static_cast<int>(serialized.size()), nullptr, &jerr);
+	natsStatus status =
+	    js_PublishAsync(js_.get(), subject.c_str(), serialized.data(),
+	                    static_cast<int>(serialized.size()), nullptr);
 
 	if (status != NATS_OK) {
 		logger->log_error("[NATS JetStream Publisher] Publish failed: "
@@ -148,7 +154,7 @@ void NatsJetStreamPublisher::log_configuration() {
 	logger->log_config("[NATS JetStream Publisher] [CONFIG_BEGIN]");
 	logger->log_config("[CONFIG] NATS_URL=" + nats_url_);
 	logger->log_config("[CONFIG] NATS_STREAM=" + stream_name_);
-	logger->log_config(
-	    "[CONFIG] TOPICS=" + utils::get_env_var_or_default("TOPICS", ""));
+	logger->log_config("[CONFIG] TOPICS="
+	                   + utils::get_env_var_or_default("TOPICS", ""));
 	logger->log_config("[NATS JetStream Publisher] [CONFIG_END]");
 }

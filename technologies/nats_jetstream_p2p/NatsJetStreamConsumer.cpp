@@ -40,9 +40,10 @@ std::vector<std::string> split_csv(const std::string &value) {
 } // namespace
 
 NatsJetStreamConsumer::NatsJetStreamConsumer(std::shared_ptr<Logger> logger)
-    : IConsumer(std::move(logger)), connection_(nullptr, &natsConnection_Destroy),
-      subscription_(nullptr, &natsSubscription_Destroy), js_(nullptr, &jsCtx_Destroy),
-      deserializer_(this->logger) {
+    : IConsumer(std::move(logger)),
+      connection_(nullptr, &natsConnection_Destroy),
+      subscription_(nullptr, &natsSubscription_Destroy),
+      js_(nullptr, &jsCtx_Destroy), deserializer_(this->logger) {
 	this->logger->log_info("[NATS JetStream Consumer] Created.");
 }
 
@@ -60,8 +61,8 @@ NatsJetStreamConsumer::~NatsJetStreamConsumer() {
 void NatsJetStreamConsumer::initialize() {
 	const std::optional<std::string> vtopics = utils::get_env_var("TOPICS");
 	if (!vtopics || vtopics->empty()) {
-		throw std::runtime_error(
-		    "[NATS JetStream Consumer] Missing required environment variable TOPICS.");
+		throw std::runtime_error("[NATS JetStream Consumer] Missing required "
+		                         "environment variable TOPICS.");
 	}
 
 	const std::string port =
@@ -85,7 +86,8 @@ void NatsJetStreamConsumer::initialize() {
 		}
 	}
 	if (unique_topics.empty()) {
-		throw std::runtime_error("[NATS JetStream Consumer] No valid topics provided.");
+		throw std::runtime_error(
+		    "[NATS JetStream Consumer] No valid topics provided.");
 	}
 
 	natsConnection *conn = nullptr;
@@ -100,15 +102,16 @@ void NatsJetStreamConsumer::initialize() {
 
 		logger->log_info("[NATS JetStream Consumer] Connect attempt "
 		                 + std::to_string(attempt) + "/"
-		                 + std::to_string(kMaxAttempts) + " failed to " + nats_url_ + ": "
+		                 + std::to_string(kMaxAttempts) + " failed to "
+		                 + nats_url_ + ": "
 		                 + std::string(natsStatus_GetText(status)));
 		std::this_thread::sleep_for(std::chrono::milliseconds(500));
 	}
 
 	if (status != NATS_OK) {
-		throw std::runtime_error("[NATS JetStream Consumer] Failed to connect to "
-		                         + nats_url_ + ": "
-		                         + std::string(natsStatus_GetText(status)));
+		throw std::runtime_error(
+		    "[NATS JetStream Consumer] Failed to connect to " + nats_url_ + ": "
+		    + std::string(natsStatus_GetText(status)));
 	}
 
 	connection_.reset(conn);
@@ -118,8 +121,9 @@ void NatsJetStreamConsumer::initialize() {
 	jsCtx *js = nullptr;
 	status = natsConnection_JetStream(&js, connection_.get(), &js_opts);
 	if (status != NATS_OK) {
-		throw std::runtime_error("[NATS JetStream Consumer] JetStream init failed: "
-		                         + std::string(natsStatus_GetText(status)));
+		throw std::runtime_error(
+		    "[NATS JetStream Consumer] JetStream init failed: "
+		    + std::string(natsStatus_GetText(status)));
 	}
 	js_.reset(js);
 
@@ -128,27 +132,25 @@ void NatsJetStreamConsumer::initialize() {
 	jsStreamInfo *stream_info = nullptr;
 	constexpr int kStreamWaitAttempts = 60;
 	for (int attempt = 1; attempt <= kStreamWaitAttempts; ++attempt) {
-		status =
-		    js_GetStreamInfo(&stream_info, js_.get(), stream_name_.c_str(),
-		                     nullptr, &jerr);
+		status = js_GetStreamInfo(&stream_info, js_.get(), stream_name_.c_str(),
+		                          nullptr, &jerr);
 		if (status == NATS_OK) {
 			jsStreamInfo_Destroy(stream_info);
 			stream_info = nullptr;
 			break;
 		}
 		logger->log_info("[NATS JetStream Consumer] Waiting for stream '"
-		                 + stream_name_ + "' ("
-		                 + std::to_string(attempt) + "/"
-		                 + std::to_string(kStreamWaitAttempts) + "): "
-		                 + std::string(natsStatus_GetText(status)) + ", jsErr="
-		                 + std::to_string(static_cast<int>(jerr)));
+		                 + stream_name_ + "' (" + std::to_string(attempt) + "/"
+		                 + std::to_string(kStreamWaitAttempts)
+		                 + "): " + std::string(natsStatus_GetText(status))
+		                 + ", jsErr=" + std::to_string(static_cast<int>(jerr)));
 		std::this_thread::sleep_for(std::chrono::milliseconds(500));
 	}
 	if (status != NATS_OK) {
 		throw std::runtime_error(
 		    "[NATS JetStream Consumer] Stream not available: "
-		    + std::string(natsStatus_GetText(status)) + ", jsErr="
-		    + std::to_string(static_cast<int>(jerr)));
+		    + std::string(natsStatus_GetText(status))
+		    + ", jsErr=" + std::to_string(static_cast<int>(jerr)));
 	}
 
 	jsSubOptions sub_opts;
@@ -156,8 +158,7 @@ void NatsJetStreamConsumer::initialize() {
 	sub_opts.Stream = stream_name_.c_str();
 
 	natsSubscription *sub = nullptr;
-	status =
-	    js_SubscribeSync(&sub, js_.get(), ">", nullptr, &sub_opts, &jerr);
+	status = js_SubscribeSync(&sub, js_.get(), ">", nullptr, &sub_opts, &jerr);
 	if (status != NATS_OK) {
 		throw std::runtime_error("[NATS JetStream Consumer] Subscribe failed: "
 		                         + std::string(natsStatus_GetText(status)));
@@ -183,18 +184,18 @@ void NatsJetStreamConsumer::subscribe(const std::string &subject) {
 
 void NatsJetStreamConsumer::start_loop() {
 	deserializer_.start(
-	    [](const void *data, size_t len, std::string & /*topic*/, Payload &out) {
-		    return Payload::deserialize(data, len, out);
-	    },
-	    [this](const Payload &payload, const std::string & /*topic*/, size_t /*raw_len*/) {
+	    [](const void *data, size_t len, std::string & /*topic*/,
+	       Payload &out) { return Payload::deserialize(data, len, out); },
+	    [this](const Payload &payload, const std::string & /*topic*/,
+	           size_t /*raw_len*/) {
 		    if (payload.kind == PayloadKind::TERMINATION) {
 			    subscribed_streams.dec();
-			    logger->log_info(
-			        "[NATS JetStream Consumer] Termination signal received for message ID: "
-			        + payload.message_id);
+			    logger->log_info("[NATS JetStream Consumer] Termination signal "
+			                     "received for message ID: "
+			                     + payload.message_id);
 			    if (subscribed_streams.get() == 0) {
-				    logger->log_info(
-				        "[NATS JetStream Consumer] All streams terminated. Exiting.");
+				    logger->log_info("[NATS JetStream Consumer] All streams "
+				                     "terminated. Exiting.");
 				    stop_receiving_ = true;
 			    }
 			    logger->log_info(
@@ -226,12 +227,14 @@ void NatsJetStreamConsumer::start_loop() {
 		const size_t data_len = static_cast<size_t>(natsMsg_GetDataLength(msg));
 
 		if (!Payload::deserialize_id(data_ptr, data_len, payload)) {
-			logger->log_error("[NATS JetStream Consumer] Deserialization failed.");
+			logger->log_error(
+			    "[NATS JetStream Consumer] Deserialization failed.");
 			natsMsg_Destroy(msg);
 			continue;
 		}
 
-		logger->log_study("Reception," + payload.message_id + "," + subject_str);
+		logger->log_study("Reception," + payload.message_id + ","
+		                  + subject_str);
 
 		utils::Deserializer::Item item;
 		item.holder = std::shared_ptr<void>(
@@ -241,8 +244,8 @@ void NatsJetStreamConsumer::start_loop() {
 		item.topic = subject_str;
 		item.message_id = payload.message_id;
 		if (!deserializer_.enqueue(std::move(item))) {
-			logger->log_error(
-			    "[NATS JetStream Consumer] Deserializer queue full; dropping message.");
+			logger->log_error("[NATS JetStream Consumer] Deserializer queue "
+			                  "full; dropping message.");
 			continue;
 		}
 
@@ -260,7 +263,7 @@ void NatsJetStreamConsumer::log_configuration() {
 	logger->log_config("[NATS JetStream Consumer] [CONFIG_BEGIN]");
 	logger->log_config("[CONFIG] NATS_URL=" + nats_url_);
 	logger->log_config("[CONFIG] NATS_STREAM=" + stream_name_);
-	logger->log_config(
-	    "[CONFIG] TOPICS=" + utils::get_env_var_or_default("TOPICS", ""));
+	logger->log_config("[CONFIG] TOPICS="
+	                   + utils::get_env_var_or_default("TOPICS", ""));
 	logger->log_config("[NATS JetStream Consumer] [CONFIG_END]");
 }
