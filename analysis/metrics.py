@@ -10,10 +10,10 @@ EVENT_TIMESTAMP_FMT = "%Y-%m-%d %H:%M:%S%.f"
 RESOURCE_TIMESTAMP_FMT = "%Y-%m-%dT%H:%M:%S%.f"
 
 
-def _load_event_log(run_dir: Path) -> pl.DataFrame:
+def _scan_event_log(run_dir: Path) -> pl.LazyFrame | None:
     parquet_files = list(run_dir.glob("*.parquet"))
     if not parquet_files:
-        return pl.DataFrame()
+        return None
     lf = pl.scan_parquet(str(run_dir / "*.parquet"))
     schema = lf.collect_schema()
     topic_expr = (
@@ -36,7 +36,7 @@ def _load_event_log(run_dir: Path) -> pl.DataFrame:
         if "serialized_size" in schema
         else pl.lit(None).cast(pl.Int64).alias("serialized_size")
     )
-    df = (
+    return (
         lf.select(
             pl.col("timestamp"),
             pl.col("event_type"),
@@ -66,18 +66,7 @@ def _load_event_log(run_dir: Path) -> pl.DataFrame:
             )
         )
         .filter(pl.col("message_id").is_not_null())
-        .collect()
     )
-
-    # If a technology does not produce Deserialized events, treat Reception as Deserialized
-    # so downstream throughput/latency computations can still run.
-    if df.filter(pl.col("event_type") == "Deserialized").is_empty():
-        reception_as_deserialized = df.filter(pl.col("event_type") == "Reception").with_columns(
-            pl.lit("Deserialized").alias("event_type")
-        )
-        df = pl.concat([df, reception_as_deserialized], how="vertical")
-
-    return df
 
 
 def _load_resource_metrics(run_dir: Path) -> pl.DataFrame:
@@ -153,10 +142,9 @@ def throughput_for_run(
         ):
             return cached
     run_dir = get_run_dir(scenario, tech, run, logs_root)
-    events = _load_event_log(run_dir)
-    if events.is_empty():
+    events = _scan_event_log(run_dir)
+    if events is None:
         return pl.DataFrame()
-
     # Fill missing serialized_size values based on stable (message_id, topic) mapping.
     # Rule: if Serializing lacks size, use Publication's size; if Reception lacks size,
     # use Deserialized's size.
@@ -209,15 +197,12 @@ def throughput_for_run(
     )
 
     # Align all throughput curves to the same run start timestamp
-    run_start_ts = events.select(pl.col("timestamp").min()).item()
+    run_start_ts = events.select(pl.col("timestamp").min()).collect().item()
+    if run_start_ts is None:
+        return pl.DataFrame()
 
     events = events.filter(pl.col("event_type") == event_type)
-    if events.is_empty():
-        return pl.DataFrame()
-
     events = events.filter(pl.col("serialized_size").is_not_null())
-    if events.is_empty():
-        return pl.DataFrame()
 
     throughput = (
         events.sort("timestamp")
@@ -240,8 +225,11 @@ def throughput_for_run(
         .filter(pl.col("time_s") >= 0)
         .select(["time_s", "throughput_mb_s"])
     )
-    throughput.write_parquet(cache_path)
-    return throughput
+    throughput_df = throughput.collect()
+    if throughput_df.is_empty():
+        return pl.DataFrame()
+    throughput_df.write_parquet(cache_path)
+    return throughput_df
 
 
 def latency_stats_for_run(
@@ -252,25 +240,36 @@ def latency_stats_for_run(
 ) -> pl.DataFrame:
     cache_dir = get_cache_dir(scenario, logs_root)
     cache_path = cache_dir / f"latency_segments_{tech}_{run}.parquet"
+    cached: pl.DataFrame | None = None
+    cached_segments: set[str] = set()
     if cache_path.exists():
         cached = pl.read_parquet(cache_path)
+        cached_segments = (
+            set(cached.get_column("segment").to_list())
+            if (not cached.is_empty() and "segment" in cached.columns)
+            else set()
+        )
+    run_dir = get_run_dir(scenario, tech, run, logs_root)
+    events = _scan_event_log(run_dir)
+    if events is None:
+        return pl.DataFrame()
+    has_deserialized = (
+        events.filter(pl.col("event_type") == "Deserialized")
+        .limit(1)
+        .collect()
+        .height
+        > 0
+    )
+    if cached is not None and cached_segments:
         expected_segments = {
             "serializing_to_publication",
             "publication_to_reception",
-            "reception_to_deserialized",
             "end_to_end",
         }
-        if (
-            not cached.is_empty()
-            and "segment" in cached.columns
-            and expected_segments.issubset(set(cached.get_column("segment").to_list()))
-        ):
+        if has_deserialized:
+            expected_segments.add("reception_to_deserialized")
+        if expected_segments.issubset(cached_segments):
             return cached
-    run_dir = get_run_dir(scenario, tech, run, logs_root)
-    events = _load_event_log(run_dir)
-    if events.is_empty():
-        return pl.DataFrame()
-
     base_keys = ["message_id", "topic"]
     publisher_keys = [*base_keys, "container_name"]
     consumer_keys = [*base_keys, "container_name"]
@@ -280,7 +279,7 @@ def latency_stats_for_run(
         end_type: str,
         join_keys: list[str],
         segment: str,
-    ) -> pl.DataFrame:
+    ) -> pl.LazyFrame:
         start_df = (
             events.filter(pl.col("event_type") == start_type)
             .select(*[pl.col(k) for k in join_keys], pl.col("timestamp").alias("t0"))
@@ -289,8 +288,6 @@ def latency_stats_for_run(
             events.filter(pl.col("event_type") == end_type)
             .select(*[pl.col(k) for k in join_keys], pl.col("timestamp").alias("t1"))
         )
-        if start_df.is_empty() or end_df.is_empty():
-            return pl.DataFrame()
         latency = (
             start_df.join(end_df, on=join_keys, how="inner")
             .with_columns(
@@ -301,8 +298,6 @@ def latency_stats_for_run(
             )
             .select("latency_ms")
         )
-        if latency.is_empty():
-            return pl.DataFrame()
         return latency.select(
             pl.lit(segment).alias("segment"),
             pl.col("latency_ms").quantile(0.50).alias("p50_ms"),
@@ -325,54 +320,97 @@ def latency_stats_for_run(
             base_keys,
             "publication_to_reception",
         ),
-        _segment(
-            "Reception",
-            "Deserialized",
-            consumer_keys,
-            "reception_to_deserialized",
-        ),
-        _segment(
-            "Serializing",
-            "Deserialized",
-            base_keys,
-            "end_to_end",
-        ),
     ]
+    if has_deserialized:
+        segments.append(
+            _segment(
+                "Reception",
+                "Deserialized",
+                consumer_keys,
+                "reception_to_deserialized",
+            )
+        )
+        segments.append(
+            _segment(
+                "Serializing",
+                "Deserialized",
+                base_keys,
+                "end_to_end",
+            )
+        )
+    else:
+        segments.append(
+            _segment(
+                "Serializing",
+                "Reception",
+                base_keys,
+                "end_to_end",
+            )
+        )
 
-    stats = pl.concat([s for s in segments if not s.is_empty()], how="vertical")
-    if stats.is_empty():
+    stats = pl.concat(segments, how="vertical")
+    stats_df = stats.collect().with_columns(
+        pl.col(["p50_ms", "p90_ms", "p99_ms", "max_ms"]).cast(
+            pl.Float64, strict=False
+        )
+    )
+    if stats_df.is_empty():
         return pl.DataFrame()
 
-    stats.write_parquet(cache_path)
-    return stats
+    stats_df.write_parquet(cache_path)
+    return stats_df
 
 
-def latency_samples_for_run(
+def latency_stats_for_run_with_offsets(
     scenario: str,
     tech: str,
     run: str,
+    start_offset_s: int,
+    end_offset_s: int,
     logs_root: str | Path = PATH,
 ) -> pl.DataFrame:
-    """Return per-message latency samples with a time axis for offset filtering.
+    if start_offset_s == 0 and end_offset_s == 0:
+        return latency_stats_for_run(scenario, tech, run, logs_root=logs_root)
 
-    Output columns: segment, time_s, latency_ms
-    """
     cache_dir = get_cache_dir(scenario, logs_root)
-    cache_path = cache_dir / f"latency_samples_{tech}_{run}.parquet"
+    cache_path = (
+        cache_dir
+        / f"latency_segments_{tech}_{run}_offset_{start_offset_s}s_{end_offset_s}s.parquet"
+    )
+    cached: pl.DataFrame | None = None
+    cached_segments: set[str] = set()
     if cache_path.exists():
         cached = pl.read_parquet(cache_path)
-        if (
-            not cached.is_empty()
-            and {"segment", "time_s", "latency_ms"}.issubset(set(cached.columns))
-        ):
-            return cached
+        cached_segments = (
+            set(cached.get_column("segment").to_list())
+            if (not cached.is_empty() and "segment" in cached.columns)
+            else set()
+        )
 
     run_dir = get_run_dir(scenario, tech, run, logs_root)
-    events = _load_event_log(run_dir)
-    if events.is_empty():
+    events = _scan_event_log(run_dir)
+    if events is None:
         return pl.DataFrame()
-
-    run_start_ms = events.select(pl.col("timestamp").dt.epoch("ms").min()).item()
+    has_deserialized = (
+        events.filter(pl.col("event_type") == "Deserialized")
+        .limit(1)
+        .collect()
+        .height
+        > 0
+    )
+    if cached is not None and cached_segments:
+        expected_segments = {
+            "serializing_to_publication",
+            "publication_to_reception",
+            "end_to_end",
+        }
+        if has_deserialized:
+            expected_segments.add("reception_to_deserialized")
+        if expected_segments.issubset(cached_segments):
+            return cached
+    run_start_ms = (
+        events.select(pl.col("timestamp").dt.epoch("ms").min()).collect().item()
+    )
     if run_start_ms is None:
         return pl.DataFrame()
 
@@ -385,7 +423,7 @@ def latency_samples_for_run(
         end_type: str,
         join_keys: list[str],
         segment: str,
-    ) -> pl.DataFrame:
+    ) -> pl.LazyFrame:
         start_df = (
             events.filter(pl.col("event_type") == start_type)
             .select(*[pl.col(k) for k in join_keys], pl.col("timestamp").alias("t0"))
@@ -394,13 +432,7 @@ def latency_samples_for_run(
             events.filter(pl.col("event_type") == end_type)
             .select(*[pl.col(k) for k in join_keys], pl.col("timestamp").alias("t1"))
         )
-        if start_df.is_empty() or end_df.is_empty():
-            return pl.DataFrame()
-
         joined = start_df.join(end_df, on=join_keys, how="inner")
-        if joined.is_empty():
-            return pl.DataFrame()
-
         return (
             joined.with_columns(
                 (
@@ -433,26 +465,64 @@ def latency_samples_for_run(
             base_keys,
             "publication_to_reception",
         ),
-        _segment_samples(
-            "Reception",
-            "Deserialized",
-            consumer_keys,
-            "reception_to_deserialized",
-        ),
-        _segment_samples(
-            "Serializing",
-            "Deserialized",
-            base_keys,
-            "end_to_end",
-        ),
     ]
+    if has_deserialized:
+        segments.append(
+            _segment_samples(
+                "Reception",
+                "Deserialized",
+                consumer_keys,
+                "reception_to_deserialized",
+            )
+        )
+        segments.append(
+            _segment_samples(
+                "Serializing",
+                "Deserialized",
+                base_keys,
+                "end_to_end",
+            )
+        )
+    else:
+        segments.append(
+            _segment_samples(
+                "Serializing",
+                "Reception",
+                base_keys,
+                "end_to_end",
+            )
+        )
 
-    samples = pl.concat([s for s in segments if not s.is_empty()], how="vertical")
-    if samples.is_empty():
+    samples = pl.concat(segments, how="vertical")
+    max_time_s = samples.select(pl.col("time_s").max()).collect().item()
+    if max_time_s is None:
+        return pl.DataFrame()
+    end_s = int(max_time_s) - end_offset_s
+    if end_s < start_offset_s:
         return pl.DataFrame()
 
-    samples.write_parquet(cache_path)
-    return samples
+    stats = (
+        samples.filter(
+            (pl.col("time_s") >= start_offset_s) & (pl.col("time_s") <= end_s)
+        )
+        .group_by("segment")
+        .agg(
+            pl.col("latency_ms").quantile(0.50).alias("p50_ms"),
+            pl.col("latency_ms").quantile(0.90).alias("p90_ms"),
+            pl.col("latency_ms").quantile(0.99).alias("p99_ms"),
+            pl.col("latency_ms").max().alias("max_ms"),
+        )
+        .sort("segment")
+    )
+    stats_df = stats.collect().with_columns(
+        pl.col(["p50_ms", "p90_ms", "p99_ms", "max_ms"]).cast(
+            pl.Float64, strict=False
+        )
+    )
+    if stats_df.is_empty():
+        return pl.DataFrame()
+    stats_df.write_parquet(cache_path)
+    return stats_df
 
 
 def resource_usage_for_run(

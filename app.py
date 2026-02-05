@@ -14,7 +14,7 @@ from analysis.metrics import (
     average_curve,
     average_latency,
     latency_stats_for_run,
-    latency_samples_for_run,
+    latency_stats_for_run_with_offsets,
     resource_usage_for_run,
     throughput_for_run,
 )
@@ -51,8 +51,22 @@ def load_latency_stats(
 
 
 @st.cache_data(show_spinner=False)
-def load_latency_samples(scenario: str, tech: str, run: str, logs_root: str) -> pl.DataFrame:
-    return latency_samples_for_run(scenario, tech, run, logs_root=logs_root)
+def load_latency_stats_with_offsets(
+    scenario: str,
+    tech: str,
+    run: str,
+    start_offset_s: int,
+    end_offset_s: int,
+    logs_root: str,
+) -> pl.DataFrame:
+    return latency_stats_for_run_with_offsets(
+        scenario,
+        tech,
+        run,
+        start_offset_s,
+        end_offset_s,
+        logs_root=logs_root,
+    )
 
 
 @st.cache_data(show_spinner=False)
@@ -136,32 +150,13 @@ def main() -> None:
     def _latency_stats_with_offset(scenario: str, tech: str, run: str) -> pl.DataFrame:
         if start_offset_s == 0 and end_offset_s == 0:
             return load_latency_stats(scenario, tech, run, logs_root)
-
-        samples = load_latency_samples(scenario, tech, run, logs_root)
-        if samples.is_empty():
-            return pl.DataFrame()
-
-        max_time_s = samples.select(pl.col("time_s").max()).item()
-        if max_time_s is None:
-            return pl.DataFrame()
-        end_s = int(max_time_s) - end_offset_s
-        if end_s < start_offset_s:
-            return pl.DataFrame()
-        samples = samples.filter(
-            (pl.col("time_s") >= start_offset_s) & (pl.col("time_s") <= end_s)
-        )
-        if samples.is_empty():
-            return pl.DataFrame()
-
-        return (
-            samples.group_by("segment")
-            .agg(
-                pl.col("latency_ms").quantile(0.50).alias("p50_ms"),
-                pl.col("latency_ms").quantile(0.90).alias("p90_ms"),
-                pl.col("latency_ms").quantile(0.99).alias("p99_ms"),
-                pl.col("latency_ms").max().alias("max_ms"),
-            )
-            .sort("segment")
+        return load_latency_stats_with_offsets(
+            scenario,
+            tech,
+            run,
+            start_offset_s,
+            end_offset_s,
+            logs_root,
         )
 
     techs_available = sorted(scenarios[scenario].keys())
