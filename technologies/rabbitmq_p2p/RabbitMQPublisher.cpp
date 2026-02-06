@@ -9,31 +9,11 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
-#include <utility>
+#include <thread>
 
 #include "Logger.hpp"
 #include "Payload.hpp"
 #include "Utils.hpp"
-
-namespace {
-struct EventItem {
-	RabbitMQPublisher *publisher_ptr;
-	std::string serialized_message;
-	std::string topic;
-	std::string msg_id;
-	PayloadKind msg_kind;
-	size_t payload_size;
-	size_t serialized_size;
-
-	EventItem(RabbitMQPublisher *ptr, std::string &&msg, std::string topic,
-	          std::string id, PayloadKind kind, size_t p_size, size_t s_size)
-	    : publisher_ptr(ptr), serialized_message(std::move(msg)),
-	      topic(std::move(topic)), msg_id(std::move(id)),
-	      msg_kind(std::move(kind)), payload_size(p_size),
-	      serialized_size(s_size) {
-	}
-};
-} // namespace
 
 RabbitMQPublisher::RabbitMQPublisher(std::shared_ptr<Logger> logger)
     : IPublisher(logger) {
@@ -47,7 +27,8 @@ RabbitMQPublisher::~RabbitMQPublisher() {
 		logger->log_debug("[RabbitMQ Publisher] Waiting for outgoing "
 		                  "messages to be sent, remaining: "
 		                  + std::to_string(connection_->queued()) + " bytes.");
-		std::this_thread::sleep_for(std::chrono::milliseconds(200));
+		pump_event_loop_(4);
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
 	}
 	std::this_thread::sleep_for(
 	    std::chrono::milliseconds(1500)); // wait for deliveries
@@ -87,7 +68,7 @@ void RabbitMQPublisher::initialize() {
 
 	max_out_queue_bytes_ = static_cast<size_t>(std::stoul(
 	    utils::get_env_var_or_default("RABBITMQ_MAX_OUT_BUFFER_BYTES",
-	                                  "1073741824"))); // 1GB default
+	                                  "33554432"))); // default 32MB
 
 	event_base_ = event_base_new();
 	if (!event_base_) {
@@ -104,8 +85,6 @@ void RabbitMQPublisher::initialize() {
 		logger->log_error(std::string("[RabbitMQ Publisher] Channel error: ")
 		                  + msg);
 	});
-
-	start_event_loop_();
 
 	channel_->declareExchange(exchange_, AMQP::direct)
 	    .onSuccess([this]() {
@@ -144,51 +123,32 @@ void RabbitMQPublisher::send_message(const Payload &message,
 		return;
 	}
 
-	EventItem *arg_data = new EventItem(
-	    this, std::move(serialized), topic, message.message_id, message.kind,
-	    message.data_size, message.serialized_bytes);
-
 	while (connection_->queued() > max_out_queue_bytes_) {
 		logger->log_debug("[RabbitMQ Publisher] Throttling publish, out "
 		                  "queue size: "
 		                  + std::to_string(connection_->queued()) + " bytes.");
-		std::this_thread::sleep_for(std::chrono::milliseconds(200));
+		pump_event_loop_(2);
+		std::this_thread::sleep_for(std::chrono::microseconds(10));
 	}
 
-	int ret = event_base_once(
-	    event_base_, -1, EV_TIMEOUT,
-	    [](evutil_socket_t, short, void *arg) {
-		    auto *item = static_cast<EventItem *>(arg);
+	bool ok = channel_->publish(exchange_, topic, serialized.data(),
+	                            message.serialized_bytes);
 
-		    bool ok = item->publisher_ptr->channel_->publish(
-		        item->publisher_ptr->exchange_, item->topic,
-		        item->serialized_message.data(), item->serialized_size);
-
-		    if (ok) {
-			    item->publisher_ptr->logger->log_study(
-			        "Publication," + item->msg_id + "," + item->topic + ","
-			        + std::to_string(item->payload_size) + ","
-			        + std::to_string(item->serialized_size));
-		    } else {
-			    item->publisher_ptr->logger->log_error(
-			        "[RabbitMQ Publisher] Publish failed for message ID: "
-			        + item->msg_id);
-		    }
-
-		    if (item->msg_kind == PayloadKind::TERMINATION) {
-			    item->publisher_ptr->terminated_.store(
-			        true, std::memory_order_release);
-		    }
-
-		    delete item;
-	    },
-	    arg_data, nullptr);
-
-	if (ret != 0) {
+	if (ok) {
+		logger->log_study("Publication," + message.message_id + "," + topic
+		                  + "," + std::to_string(message.data_size) + ","
+		                  + std::to_string(message.serialized_bytes));
+	} else {
 		logger->log_error(
-		    "[RabbitMQ Publisher] event_base_once failed to schedule publish.");
-		delete arg_data;
+		    "[RabbitMQ Publisher] Publish failed for message ID: "
+		    + message.message_id);
 	}
+
+	if (message.kind == PayloadKind::TERMINATION) {
+		terminated_.store(true, std::memory_order_release);
+	}
+
+	pump_event_loop_(2);
 }
 
 void RabbitMQPublisher::log_configuration() {
@@ -202,19 +162,9 @@ void RabbitMQPublisher::log_configuration() {
 	logger->log_config("[RabbitMQ Publisher] [CONFIG_END]");
 }
 
-void RabbitMQPublisher::start_event_loop_() {
-	if (!event_base_) {
-		return;
-	}
-	io_thread_ = std::thread([this]() { event_base_dispatch(event_base_); });
-}
-
 void RabbitMQPublisher::stop_event_loop_() {
 	if (event_base_) {
 		event_base_loopbreak(event_base_);
-	}
-	if (io_thread_.joinable()) {
-		io_thread_.join();
 	}
 	if (event_base_) {
 		event_base_free(event_base_);
@@ -223,13 +173,28 @@ void RabbitMQPublisher::stop_event_loop_() {
 }
 
 bool RabbitMQPublisher::wait_ready_(int timeout_ms) {
-	std::unique_lock<std::mutex> lock(ready_mu_);
-	if (ready_.load(std::memory_order_acquire)) {
-		return true;
+	auto deadline = std::chrono::steady_clock::now()
+	    + std::chrono::milliseconds(timeout_ms);
+	while (std::chrono::steady_clock::now() < deadline) {
+		if (ready_.load(std::memory_order_acquire)) {
+			return true;
+		}
+		pump_event_loop_(4);
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
 	}
-	return ready_cv_.wait_for(
-	    lock, std::chrono::milliseconds(timeout_ms),
-	    [this]() { return ready_.load(std::memory_order_acquire); });
+	return ready_.load(std::memory_order_acquire);
+}
+
+void RabbitMQPublisher::pump_event_loop_(int max_iterations) {
+	if (!event_base_) {
+		return;
+	}
+	for (int i = 0; i < max_iterations; ++i) {
+		const int rc = event_base_loop(event_base_, EVLOOP_NONBLOCK);
+		if (rc != 0) {
+			break;
+		}
+	}
 }
 
 std::string RabbitMQPublisher::build_amqp_url_(const std::string &endpoint,
