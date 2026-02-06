@@ -227,11 +227,12 @@ void NatsJetStreamConsumer::start_loop() {
 		const std::string subject_str = subject ? subject : "";
 		const void *data_ptr = natsMsg_GetData(msg);
 		const size_t data_len = static_cast<size_t>(natsMsg_GetDataLength(msg));
+		auto msg_holder = std::shared_ptr<void>(
+		    msg, [](void *p) { natsMsg_Destroy(static_cast<natsMsg *>(p)); });
 
 		if (!Payload::deserialize_id(data_ptr, data_len, payload)) {
 			logger->log_error(
 			    "[NATS JetStream Consumer] Deserialization failed.");
-			natsMsg_Destroy(msg);
 			continue;
 		}
 
@@ -239,8 +240,7 @@ void NatsJetStreamConsumer::start_loop() {
 		                  + subject_str);
 
 		utils::Deserializer::Item item;
-		item.holder = std::shared_ptr<void>(
-		    msg, [](void *p) { natsMsg_Destroy(static_cast<natsMsg *>(p)); });
+		item.holder = msg_holder;
 		item.data = data_ptr;
 		item.len = data_len;
 		item.topic = subject_str;
@@ -251,7 +251,7 @@ void NatsJetStreamConsumer::start_loop() {
 			continue;
 		}
 
-		status = natsMsg_Ack(msg, nullptr);
+		status = natsMsg_Ack(static_cast<natsMsg *>(msg_holder.get()), nullptr);
 		if (status != NATS_OK) {
 			logger->log_error("[NATS JetStream Consumer] Ack failed: "
 			                  + std::string(natsStatus_GetText(status)));
