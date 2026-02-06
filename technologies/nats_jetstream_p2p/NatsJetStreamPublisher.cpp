@@ -89,6 +89,7 @@ void NatsJetStreamPublisher::initialize() {
 	jsStreamConfig_Init(&stream_cfg);
 	stream_cfg.Name = stream_name_.c_str();
 	stream_cfg.Storage = js_MemoryStorage;
+	// consistent with nats.config
 	stream_cfg.MaxBytes = static_cast<int64_t>(4) * 1024 * 1024 * 1024;
 	std::vector<const char *> subjects;
 	subjects.reserve(topic_list.size());
@@ -127,8 +128,9 @@ void NatsJetStreamPublisher::send_message(const Payload &message,
 		return;
 	}
 
-	jsPubAck *ack = nullptr;
-	jsErrCode jerr = static_cast<jsErrCode>(0);
+	// // Note: The commented-out codes are synchronous publish with ack
+	// jsPubAck *ack = nullptr;
+	// jsErrCode jerr = static_cast<jsErrCode>(0);
 	// natsStatus status = js_Publish(
 	//     &ack, js_.get(), subject.c_str(), serialized.data(),
 	//     static_cast<int>(serialized.size()), nullptr, &jerr);
@@ -141,9 +143,9 @@ void NatsJetStreamPublisher::send_message(const Payload &message,
 		                  + std::string(natsStatus_GetText(status)));
 		return;
 	}
-	if (ack != nullptr) {
-		jsPubAck_Destroy(ack);
-	}
+	// if (ack != nullptr) {
+	// 	jsPubAck_Destroy(ack);
+	// }
 
 	logger->log_study("Publication," + message.message_id + "," + subject + ","
 	                  + std::to_string(message.data_size) + ","

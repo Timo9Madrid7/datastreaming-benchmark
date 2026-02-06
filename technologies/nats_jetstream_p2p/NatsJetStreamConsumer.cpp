@@ -164,7 +164,9 @@ void NatsJetStreamConsumer::initialize() {
 		                         + std::string(natsStatus_GetText(status)));
 	}
 
-	status = natsSubscription_SetPendingLimits(sub, 500 * 1000, INT_MAX);
+	constexpr int kPendingMsgLimit = 500 * 1000;
+	constexpr int kPendingBytesLimit = INT_MAX;
+	status = natsSubscription_SetPendingLimits(sub, kPendingMsgLimit, kPendingBytesLimit);
 	if (status != NATS_OK) {
 		throw std::runtime_error(
 		    "[NATS JetStream Consumer] Failed to set pending limits: "
