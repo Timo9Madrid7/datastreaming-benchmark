@@ -1,11 +1,8 @@
 #include "RabbitMQPublisher.hpp"
 
 #include <amqpcpp/linux_tcp/tcpconnection.h>
-#include <atomic>
 #include <chrono>
-#include <cstddef>
 #include <event2/event.h>
-#include <event2/thread.h>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -24,11 +21,8 @@ RabbitMQPublisher::~RabbitMQPublisher() {
 	logger->log_debug("[RabbitMQ Publisher] Cleaning up RabbitMQ publisher...");
 	while (connection_->queued() > 0
 	       || !terminated_.load(std::memory_order_acquire)) {
-		logger->log_debug("[RabbitMQ Publisher] Waiting for outgoing "
-		                  "messages to be sent, remaining: "
-		                  + std::to_string(connection_->queued()) + " bytes.");
 		pump_event_loop_(4);
-		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
 	}
 	std::this_thread::sleep_for(
 	    std::chrono::milliseconds(1500)); // wait for deliveries
@@ -46,14 +40,6 @@ RabbitMQPublisher::~RabbitMQPublisher() {
 }
 
 void RabbitMQPublisher::initialize() {
-	static std::once_flag libevent_threading_once;
-	std::call_once(libevent_threading_once, []() {
-		if (evthread_use_pthreads() != 0) {
-			throw std::runtime_error("[RabbitMQ Publisher] Failed to enable "
-			                         "libevent pthread support.");
-		}
-	});
-
 	std::string endpoint =
 	    utils::get_env_var_or_default("PUBLISHER_ENDPOINT", "127.0.0.1");
 	if (endpoint == "0.0.0.0") {
@@ -88,11 +74,7 @@ void RabbitMQPublisher::initialize() {
 
 	channel_->declareExchange(exchange_, AMQP::direct)
 	    .onSuccess([this]() {
-		    {
-			    std::lock_guard<std::mutex> lock(ready_mu_);
-			    ready_.store(true, std::memory_order_release);
-		    }
-		    ready_cv_.notify_all();
+		    ready_.store(true, std::memory_order_release);
 		    logger->log_info("[RabbitMQ Publisher] Exchange declared: "
 		                     + exchange_);
 	    })
@@ -124,11 +106,8 @@ void RabbitMQPublisher::send_message(const Payload &message,
 	}
 
 	while (connection_->queued() > max_out_queue_bytes_) {
-		logger->log_debug("[RabbitMQ Publisher] Throttling publish, out "
-		                  "queue size: "
-		                  + std::to_string(connection_->queued()) + " bytes.");
 		pump_event_loop_(2);
-		std::this_thread::sleep_for(std::chrono::microseconds(10));
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
 	}
 
 	bool ok = channel_->publish(exchange_, topic, serialized.data(),
@@ -139,9 +118,8 @@ void RabbitMQPublisher::send_message(const Payload &message,
 		                  + "," + std::to_string(message.data_size) + ","
 		                  + std::to_string(message.serialized_bytes));
 	} else {
-		logger->log_error(
-		    "[RabbitMQ Publisher] Publish failed for message ID: "
-		    + message.message_id);
+		logger->log_error("[RabbitMQ Publisher] Publish failed for message ID: "
+		                  + message.message_id);
 	}
 
 	if (message.kind == PayloadKind::TERMINATION) {
@@ -163,9 +141,6 @@ void RabbitMQPublisher::log_configuration() {
 }
 
 void RabbitMQPublisher::stop_event_loop_() {
-	if (event_base_) {
-		event_base_loopbreak(event_base_);
-	}
 	if (event_base_) {
 		event_base_free(event_base_);
 		event_base_ = nullptr;
