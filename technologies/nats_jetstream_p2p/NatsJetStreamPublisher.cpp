@@ -128,24 +128,23 @@ void NatsJetStreamPublisher::send_message(const Payload &message,
 		return;
 	}
 
-	// // Note: The commented-out codes are synchronous publish with ack
-	// jsPubAck *ack = nullptr;
-	// jsErrCode jerr = static_cast<jsErrCode>(0);
-	// natsStatus status = js_Publish(
-	//     &ack, js_.get(), subject.c_str(), serialized.data(),
-	//     static_cast<int>(serialized.size()), nullptr, &jerr);
+	jsPubAck *ack = nullptr;
+	jsErrCode jerr = static_cast<jsErrCode>(0);
 	natsStatus status =
-	    js_PublishAsync(js_.get(), subject.c_str(), serialized.data(),
-	                    static_cast<int>(serialized.size()), nullptr);
+	    js_Publish(&ack, js_.get(), subject.c_str(), serialized.data(),
+	               static_cast<int>(serialized.size()), nullptr, &jerr);
+	// natsStatus status =
+	//     js_PublishAsync(js_.get(), subject.c_str(), serialized.data(),
+	// static_cast<int>(serialized.size()), nullptr);
 
 	if (status != NATS_OK) {
 		logger->log_error("[NATS JetStream Publisher] Publish failed: "
 		                  + std::string(natsStatus_GetText(status)));
 		return;
 	}
-	// if (ack != nullptr) {
-	// 	jsPubAck_Destroy(ack);
-	// }
+	if (ack != nullptr) {
+		jsPubAck_Destroy(ack);
+	}
 
 	logger->log_study("Publication," + message.message_id + "," + subject + ","
 	                  + std::to_string(message.data_size) + ","
