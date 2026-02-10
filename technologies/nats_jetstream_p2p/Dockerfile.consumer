@@ -1,0 +1,9 @@
+# NATS JetStream C++ Consumer Dockerfile
+FROM nats_jetstream_p2p_base
+
+# Set working directory
+WORKDIR /app/build/core/applications
+
+# Run the consumer app
+ENTRYPOINT ["./ConsumerApp"]
+CMD [ "INFO", "DEBUG", "STUDY", "ERROR" ]
