@@ -173,7 +173,10 @@ class BenchmarkManager:
             self.cm.wake_all()
             logger.info("Containers unpaused. Collecting metrics...")
             # self.cm.wait_for_all()
-            self.cm.wait_for_consumers()
+            if tech_name == 'zeromq_p2p':
+                self.cm.wait_for_publishers()
+            else:
+                self.cm.wait_for_consumers()
             metrics.stop()
             events_logger = ContainerEventsLogger(
                 tech_name, scenario_name, self.scenario_name, date_time

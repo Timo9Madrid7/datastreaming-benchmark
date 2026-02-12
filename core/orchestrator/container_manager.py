@@ -386,6 +386,12 @@ class ContainerManager:
         for container in self.consumer_containers:
             container.wait()
 
+    def wait_for_publishers(self) -> None:
+        """Waits for all publisher containers to finish."""
+        logger.debug("Waiting for all publisher containers to finish...")
+        for container in self.publisher_containers:
+            container.wait()
+
     @validate_container
     def wait_for_container(self, container_id: str) -> None:
         logger.debug(f"Waiting for container {container_id} to finish...")
