@@ -140,7 +140,8 @@ def main() -> None:
         max_time_s = frame.select(pl.col("time_s").max()).item()
         if max_time_s is None:
             return frame.head(0)
-        end_s = int(max_time_s) - end_offset_s
+        tail_drop_s = max(0, window_s - 1)
+        end_s = int(max_time_s) - end_offset_s - tail_drop_s
         if end_s < start_offset_s:
             return frame.head(0)
         return frame.filter(
@@ -405,6 +406,48 @@ def main() -> None:
                 ),
                 width="stretch",
             )
+
+    throughput_mean_rows: list[dict[str, object]] = []
+    for tech in selected_techs:
+        for event_type in throughput_event_types:
+            run_means: list[float] = []
+            for run in runs_by_tech.get(tech, []):
+                if run not in selected_runs:
+                    continue
+                throughput = _trim_throughput_window(
+                    load_throughput(
+                        scenario,
+                        tech,
+                        run,
+                        window_s,
+                        event_type,
+                        logs_root,
+                    )
+                )
+                if throughput.is_empty():
+                    continue
+                mean_val = throughput.select(pl.col("throughput_mb_s").mean()).item()
+                if mean_val is not None:
+                    run_means.append(float(mean_val))
+            if run_means:
+                throughput_mean_rows.append(
+                    {
+                        "tech": tech,
+                        "event_type": event_type,
+                        "mean_throughput_mb_s": sum(run_means) / len(run_means),
+                    }
+                )
+
+    st.subheader("Mean Throughput (MB/s)")
+    if not throughput_mean_rows:
+        st.info("No throughput data available for the selected filters.")
+    else:
+        mean_table = (
+            pl.DataFrame(throughput_mean_rows)
+            .with_columns(pl.col("mean_throughput_mb_s").round(2))
+            .sort(["event_type", "mean_throughput_mb_s"], descending=[False, True])
+        )
+        st.dataframe(mean_table, width="stretch")
 
     st.header("Latency (ms)")
     latency_table_frame = (
