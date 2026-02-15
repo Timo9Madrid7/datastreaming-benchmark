@@ -222,6 +222,8 @@ class ContainerManager:
                 "PAYLOAD_SIZE": message_size,
                 "PAYLOAD_SAMPLES": 5,  # can be hardcoded for now?
                 "PAYLOAD_KIND": "FLAT",  # TODO read payload kind from config
+                # "ENABLE_RATE_LIMITER": "true",
+                # "MAX_SEND_RATE_MBPS": 200,  # only applies if rate limiter enabled
             }
 
             if tech_name.startswith("zeromq"):
