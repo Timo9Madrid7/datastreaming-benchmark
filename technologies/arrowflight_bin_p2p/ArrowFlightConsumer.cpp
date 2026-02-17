@@ -11,6 +11,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <functional>
 #include <memory>
@@ -453,7 +454,7 @@ void ArrowFlightConsumer::consume_from_publisher_(const std::string &endpoint,
 
 			logger->log_study("Reception," + meta.message_id + "," + ticket);
 
-			if (meta.message_id.find(TERMINATION_SIGNAL) != std::string::npos) {
+			if (meta.kind == static_cast<uint8_t>(PayloadKind::TERMINATION)) {
 				logger->log_info(
 				    "[Flight Consumer] Received termination for ticket="
 				    + ticket + " from publisher=" + endpoint);
