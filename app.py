@@ -140,8 +140,8 @@ def main() -> None:
         max_time_s = frame.select(pl.col("time_s").max()).item()
         if max_time_s is None:
             return frame.head(0)
-        tail_drop_s = max(0, window_s - 1)
-        end_s = int(max_time_s) - end_offset_s - tail_drop_s
+        tail_drop_s = max(0, end_offset_s, window_s)
+        end_s = int(max_time_s) - tail_drop_s
         if end_s < start_offset_s:
             return frame.head(0)
         return frame.filter(

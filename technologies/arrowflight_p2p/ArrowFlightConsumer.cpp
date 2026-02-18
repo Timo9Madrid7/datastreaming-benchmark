@@ -250,7 +250,7 @@ void ArrowFlightConsumer::consume_from_publisher_(const std::string &endpoint,
 			                  + std::to_string(data_size) + ","
 			                  + std::to_string(row_size));
 
-			if (message_id.find(TERMINATION_SIGNAL) != std::string::npos) {
+			if (kind == PayloadKind::TERMINATION) {
 				logger->log_info(
 				    "[Flight Consumer] Received termination for ticket="
 				    + ticket + " from publisher=" + endpoint);
