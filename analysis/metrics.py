@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Iterable
 
 import polars as pl
-from analysis.data_loader import get_cache_dir, get_run_dir, PATH
+from analysis.data_loader import PATH, get_cache_dir, get_run_dir
 
 EVENT_TIMESTAMP_FMT = "%Y-%m-%d %H:%M:%S%.f"
 RESOURCE_TIMESTAMP_FMT = "%Y-%m-%dT%H:%M:%S%.f"
