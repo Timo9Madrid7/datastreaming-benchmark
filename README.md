@@ -62,6 +62,8 @@ pip install docker loguru pandas polars streamlit
 
 # Modify/create *.json files in test_scenarios/ to define your scenarios
 # Modify benchmark_scenarios.json to specify scenarios and technologies
+# Modify other environment variables via core\orchestrator\container_manager.py if needed, e.g.
+# FLAT/COMPLEX payload, RateLimiter on/off, etc.
 
 # python execute_experiments.py [STUDY/CONFIG/DEBUG/INFO/ERROR] [d/m/dm]
 # arg1: log level inside containers (STUDY for benchmarking evaluation)
