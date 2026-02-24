@@ -1,0 +1,13 @@
+{
+  "scenario_batch": [
+    "1p1c1t_10MB-30s-demo.json"
+  ],
+  "technologies": [
+    "arrowflight_p2p",
+    "kafka_p2p",
+    "nats_p2p",
+    "nats_jetstream_p2p",
+    "rabbitmq_p2p",
+    "zeromq_p2p"
+  ]
+}
