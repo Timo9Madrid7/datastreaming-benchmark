@@ -1,0 +1,88 @@
+{
+    "producerAssignmentStrategy": ["round-robin"],
+    "consumerAssignmentStrategy": ["shared"],
+    "common":{
+        "numProducersPerTopic": {
+            "lower": 1,
+            "upper": 1,
+            "step": 1,
+            "step_operator": "+"
+        },
+        "numConsumers": {
+            "lower": 1,
+            "upper": 1,
+            "step": 1,
+            "step_operator": "+"
+        },
+        "numTopics": {
+            "lower": 1,
+            "upper": 1,
+            "step": 1,
+            "step_operator": "+"
+        },
+        "parallelSubscriptionsPerTopic":{
+            "lower": 1,
+            "upper": 1,
+            "step": 1,
+            "step_operator": "+"
+        },
+        "messageSizeBytes":{
+            "lower": 10485760,
+            "upper": 10485760,
+            "step": 16,
+            "step_operator": "*"
+        },
+        "producerWaitInMicroSeconds":{
+            "lower": 0,
+            "upper": 0,
+            "step": 250000,
+            "step_operator": "+"
+        },
+        "backlogSizeMessages":{
+            "lower": 0,
+            "upper": 0,
+            "step": 10,
+            "step_operator": "+"
+        }
+    },
+    "exclusive": {
+        "testDurationS": {
+            "lower": 30,
+            "upper": 30,
+            "step": 5,
+            "step_operator": "+"
+        },
+        "numberOfMessages":{
+            "lower": 100,
+            "upper": 100,
+            "step": 1,
+            "step_operator": "+"
+        }
+    },
+    "network": {
+        "bandwidthMbps": {
+            "lower": 1000,
+            "upper": 1000,
+            "step": 10,
+            "step_operator": "*"
+        },
+        "latencyMs":{
+            "lower": 0,
+            "upper": 0,
+            "step": 50,
+            "step_operator": "+"
+        },
+        "packetLossPerc":{
+            "lower": 0,
+            "upper": 0,
+            "step": 10,
+            "step_operator": "+"
+        },
+        "jitterMs":{
+            "lower": 0,
+            "upper": 0,
+            "step": 100,
+            "step_operator": "+"
+        }
+    }
+}
