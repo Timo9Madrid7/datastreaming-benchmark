@@ -59,3 +59,10 @@ diagrams/
 build_all_images.*
 clean_log_tech.bat
 analyses/.ipynb_checkpoints/resources_stats-checkpoint.ipynb
+CMakePresets.json
+test_scenarios/1p1c1t_100B-100KB_upto47mbps.json
+test_scenarios/complete_tests.json
+test_scenarios/complete_tests_discuss.json
+test_scenarios/complete_tests_small.json
+test_scenarios/mems_simulator.json
+test_scenarios/quick_test.json
