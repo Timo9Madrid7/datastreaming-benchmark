@@ -67,8 +67,31 @@ void GrpcConsumer::initialize() {
 		throw std::runtime_error("[gRPC Consumer] No valid topics provided.");
 	}
 
-	channel_ = grpc::CreateChannel(connect_endpoint_,
-	                               grpc::InsecureChannelCredentials());
+	grpc::ChannelArguments channel_args;
+	channel_args.SetMaxReceiveMessageSize(16 * 1024 * 1024);
+	channel_ = grpc::CreateCustomChannel(connect_endpoint_,
+	                                     grpc::InsecureChannelCredentials(),
+	                                     channel_args);
+
+	constexpr int kMaxConnectAttempts = 30;
+	bool connected = false;
+	for (int attempt = 1; attempt <= kMaxConnectAttempts; ++attempt) {
+		const auto deadline =
+		    std::chrono::system_clock::now() + std::chrono::seconds(1);
+		if (channel_->WaitForConnected(deadline)) {
+			connected = true;
+			break;
+		}
+		logger->log_info("[gRPC Consumer] Channel connect attempt "
+		                 + std::to_string(attempt) + "/"
+		                 + std::to_string(kMaxConnectAttempts) + " failed to "
+		                 + connect_endpoint_);
+	}
+	if (!connected) {
+		throw std::runtime_error("[gRPC Consumer] Failed to connect to "
+		                         + connect_endpoint_ + " within timeout.");
+	}
+
 	stub_ = streaming::Streamer::NewStub(channel_);
 
 	logger->log_info("[gRPC Consumer] Consumer initialized.");

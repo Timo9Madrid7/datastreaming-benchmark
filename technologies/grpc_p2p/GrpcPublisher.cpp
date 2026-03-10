@@ -60,7 +60,6 @@ void GrpcPublisher::initialize() {
 	grpc::ServerBuilder builder;
 	builder.AddListeningPort(endpoint_, grpc::InsecureServerCredentials());
 	builder.RegisterService(this);
-	builder.SetMaxReceiveMessageSize(16 * 1024 * 1024);
 	builder.SetMaxSendMessageSize(16 * 1024 * 1024);
 
 	server_ = builder.BuildAndStart();
