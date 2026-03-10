@@ -1,0 +1,35 @@
+# Expected name: grpc_p2p_base
+# gRPC C++ Base Dockerfile
+FROM core_base
+
+ENV MY_INSTALL_DIR=/root/.local
+ENV PATH="${MY_INSTALL_DIR}/bin:${PATH}"
+ENV CMAKE_PREFIX_PATH="${MY_INSTALL_DIR}:${CMAKE_PREFIX_PATH}"
+
+# Install grpc & protobuf dependencies
+RUN export DEBIAN_FRONTEND=noninteractive \
+    && mkdir -p $MY_INSTALL_DIR \
+    && apt-get update \
+    && apt-get install -y autoconf libtool pkg-config \
+    && git clone --recurse-submodules -b v1.78.1 --depth 1 --shallow-submodules https://github.com/grpc/grpc \
+    && cd grpc \
+    && mkdir -p cmake/build \
+    && cd cmake/build \
+    && cmake -DgRPC_INSTALL=ON \
+      -DgRPC_BUILD_TESTS=OFF \
+      -DCMAKE_CXX_STANDARD=17 \
+      -DCMAKE_INSTALL_PREFIX=$MY_INSTALL_DIR \
+      ../.. \
+    && make -j 4 \
+    && make install \
+    && cd / \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /app/technologies/grpc_p2p
+COPY ./technologies/grpc_p2p /app/technologies/grpc_p2p
+
+# Build the grpc-specific library
+RUN cd /app/build && cmake .. &&  cmake --build .
+
+# Move shared lib into /app/lib
+RUN mkdir -p /app/lib && cp /app/build/technologies/grpc_p2p/libgrpc_p2p_technology.so /app/lib/
