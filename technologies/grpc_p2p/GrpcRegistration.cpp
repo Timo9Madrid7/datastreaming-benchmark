@@ -18,8 +18,7 @@ extern "C" void register_technology(std::shared_ptr<Logger> logger) {
 	    [](std::shared_ptr<Logger> logger) -> std::unique_ptr<IConsumer> {
 		    return std::make_unique<GrpcConsumer>(logger);
 	    });
-	logger->log_debug(
-	    "[gRPC Registration] Registered creators in factories");
+	logger->log_debug("[gRPC Registration] Registered creators in factories");
 	Factory<IPublisher>::debug_print_registry(logger);
 	Factory<IConsumer>::debug_print_registry(logger);
 }

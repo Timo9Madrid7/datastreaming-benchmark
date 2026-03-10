@@ -1,8 +1,7 @@
 #pragma once
 
-#include <grpcpp/grpcpp.h>
-
 #include <atomic>
+#include <grpcpp/grpcpp.h>
 #include <memory>
 #include <string>
 #include <unordered_set>

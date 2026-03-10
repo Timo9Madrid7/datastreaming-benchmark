@@ -1,18 +1,17 @@
 #pragma once
 
-#include <grpcpp/grpcpp.h>
-
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
+#include <grpcpp/grpcpp.h>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
 #include <unordered_map>
 
-#include "IPublisher.hpp"
 #include "BS_thread_pool.hpp"
+#include "IPublisher.hpp"
 #include "streaming.grpc.pb.h"
 
 class Logger;
@@ -27,10 +26,9 @@ class GrpcPublisher : public IPublisher, public streaming::Streamer::Service {
 	void send_message(const Payload &message, std::string &topic) override;
 	void log_configuration() override;
 
-	grpc::Status DoGet(
-	    grpc::ServerContext *context,
-	    const google::protobuf::Empty *request,
-	    grpc::ServerWriter<streaming::WireMessage> *writer) override;
+	grpc::Status
+	DoGet(grpc::ServerContext *context, const google::protobuf::Empty *request,
+	      grpc::ServerWriter<streaming::WireMessage> *writer) override;
 
   private:
 	struct Subscriber {

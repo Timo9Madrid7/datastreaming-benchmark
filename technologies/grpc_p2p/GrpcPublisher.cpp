@@ -38,16 +38,19 @@ void GrpcPublisher::initialize() {
 
 	try {
 		const int fanout_threads = std::max(1, std::stoi(fanout_threads_env));
-		if (static_cast<size_t>(fanout_threads) != fanout_pool_.get_thread_count()) {
+		if (static_cast<size_t>(fanout_threads)
+		    != fanout_pool_.get_thread_count()) {
 			fanout_pool_.reset(static_cast<size_t>(fanout_threads));
 		}
 	} catch (...) {
-		throw std::runtime_error("[gRPC Publisher] Invalid GRPC_FANOUT_THREADS: "
-		                         + fanout_threads_env);
+		throw std::runtime_error(
+		    "[gRPC Publisher] Invalid GRPC_FANOUT_THREADS: "
+		    + fanout_threads_env);
 	}
 
 	try {
-		max_queue_per_consumer_ = static_cast<size_t>(std::stoul(queue_size_env));
+		max_queue_per_consumer_ =
+		    static_cast<size_t>(std::stoul(queue_size_env));
 		if (max_queue_per_consumer_ == 0) {
 			max_queue_per_consumer_ = 1;
 		}
@@ -64,7 +67,8 @@ void GrpcPublisher::initialize() {
 
 	server_ = builder.BuildAndStart();
 	if (!server_) {
-		throw std::runtime_error("[gRPC Publisher] Failed to start gRPC server.");
+		throw std::runtime_error(
+		    "[gRPC Publisher] Failed to start gRPC server.");
 	}
 
 	server_started_ = true;
@@ -111,8 +115,8 @@ void GrpcPublisher::send_message(const Payload &message, std::string &topic) {
 	std::vector<std::future<void>> fanout_tasks;
 	fanout_tasks.reserve(subscribers.size());
 	for (const auto &subscriber : subscribers) {
-		fanout_tasks.push_back(fanout_pool_.submit_task(
-		    [this, subscriber, shared_wire]() {
+		fanout_tasks.push_back(
+		    fanout_pool_.submit_task([this, subscriber, shared_wire]() {
 			    enqueue_to_subscriber_(subscriber, shared_wire);
 		    }));
 	}
@@ -137,10 +141,10 @@ void GrpcPublisher::log_configuration() {
 	logger->log_config("[gRPC Publisher] [CONFIG_END]");
 }
 
-grpc::Status GrpcPublisher::DoGet(
-    grpc::ServerContext *context,
-    const google::protobuf::Empty * /*request*/,
-    grpc::ServerWriter<streaming::WireMessage> *writer) {
+grpc::Status
+GrpcPublisher::DoGet(grpc::ServerContext *context,
+                     const google::protobuf::Empty * /*request*/,
+                     grpc::ServerWriter<streaming::WireMessage> *writer) {
 	std::shared_ptr<Subscriber> subscriber;
 	{
 		std::lock_guard<std::mutex> lock(subscribers_mu_);

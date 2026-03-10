@@ -1,14 +1,13 @@
 #include "GrpcConsumer.hpp"
 
 #include <chrono>
+#include <google/protobuf/empty.pb.h>
 #include <grpcpp/create_channel.h>
 #include <grpcpp/security/credentials.h>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <thread>
-
-#include <google/protobuf/empty.pb.h>
 
 #include "Logger.hpp"
 #include "Payload.hpp"
@@ -48,10 +47,9 @@ void GrpcConsumer::initialize() {
 		    "[gRPC Consumer] No valid publisher endpoint provided.");
 	}
 
-	const std::string port =
-	    utils::get_env_var_or_default("PUBLISHER_PORT",
-	                                  utils::get_env_var_or_default(
-	                                      "CONSUMER_PORT", "50051"));
+	const std::string port = utils::get_env_var_or_default(
+	    "PUBLISHER_PORT",
+	    utils::get_env_var_or_default("CONSUMER_PORT", "50051"));
 	connect_endpoint_ = endpoint + ":" + port;
 
 	std::string topic;
@@ -69,9 +67,8 @@ void GrpcConsumer::initialize() {
 
 	grpc::ChannelArguments channel_args;
 	channel_args.SetMaxReceiveMessageSize(16 * 1024 * 1024);
-	channel_ = grpc::CreateCustomChannel(connect_endpoint_,
-	                                     grpc::InsecureChannelCredentials(),
-	                                     channel_args);
+	channel_ = grpc::CreateCustomChannel(
+	    connect_endpoint_, grpc::InsecureChannelCredentials(), channel_args);
 
 	constexpr int kMaxConnectAttempts = 30;
 	bool connected = false;
@@ -108,16 +105,15 @@ void GrpcConsumer::subscribe(const std::string &topic) {
 
 void GrpcConsumer::start_loop() {
 	deserializer_.start(
-	    [](const void *data, size_t len, std::string & /*topic*/, Payload &out) {
-		    return Payload::deserialize(data, len, out);
-	    },
+	    [](const void *data, size_t len, std::string & /*topic*/,
+	       Payload &out) { return Payload::deserialize(data, len, out); },
 	    [this](const Payload &payload, const std::string & /*topic*/,
 	           size_t /*raw_len*/) {
 		    if (payload.kind == PayloadKind::TERMINATION) {
 			    subscribed_streams.dec();
-			    logger->log_info(
-			        "[gRPC Consumer] Termination signal received for message ID: "
-			        + payload.message_id);
+			    logger->log_info("[gRPC Consumer] Termination signal received "
+			                     "for message ID: "
+			                     + payload.message_id);
 			    if (subscribed_streams.get() == 0) {
 				    logger->log_info(
 				        "[gRPC Consumer] All streams terminated. Exiting.");
@@ -141,7 +137,8 @@ void GrpcConsumer::start_loop() {
 		}
 
 		streaming::WireMessage msg;
-		while (!stop_receiving_.load(std::memory_order_acquire) && reader_->Read(&msg)) {
+		while (!stop_receiving_.load(std::memory_order_acquire)
+		       && reader_->Read(&msg)) {
 			const std::string topic = msg.topic();
 			if (topics_.find(topic) == topics_.end()) {
 				msg.Clear();
@@ -151,10 +148,11 @@ void GrpcConsumer::start_loop() {
 			std::string message_id = msg.message_id();
 			if (message_id.empty()) {
 				Payload id_payload;
-				if (!Payload::deserialize_id(msg.body().data(), msg.body().size(),
-				                             id_payload)) {
-					logger->log_error("[gRPC Consumer] Failed to extract message id "
-					                  "from payload.");
+				if (!Payload::deserialize_id(msg.body().data(),
+				                             msg.body().size(), id_payload)) {
+					logger->log_error(
+					    "[gRPC Consumer] Failed to extract message id "
+					    "from payload.");
 					msg.Clear();
 					continue;
 				}
@@ -172,8 +170,8 @@ void GrpcConsumer::start_loop() {
 			item.topic = topic;
 			item.message_id = message_id;
 			if (!deserializer_.enqueue(std::move(item))) {
-				logger->log_error(
-				    "[gRPC Consumer] Deserializer queue full; dropping message.");
+				logger->log_error("[gRPC Consumer] Deserializer queue full; "
+				                  "dropping message.");
 			}
 
 			msg.Clear();
@@ -199,8 +197,9 @@ void GrpcConsumer::start_loop() {
 void GrpcConsumer::log_configuration() {
 	logger->log_config("[gRPC Consumer] [CONFIG_BEGIN]");
 	logger->log_config("[CONFIG] CONNECT_ENDPOINT=" + connect_endpoint_);
-	logger->log_config("[CONFIG] PUBLISHER_ENDPOINTS="
-	                   + utils::get_env_var_or_default("PUBLISHER_ENDPOINTS", ""));
+	logger->log_config(
+	    "[CONFIG] PUBLISHER_ENDPOINTS="
+	    + utils::get_env_var_or_default("PUBLISHER_ENDPOINTS", ""));
 	logger->log_config("[CONFIG] TOPICS="
 	                   + utils::get_env_var_or_default("TOPICS", ""));
 	logger->log_config("[gRPC Consumer] [CONFIG_END]");
