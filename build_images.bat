@@ -28,3 +28,7 @@ docker build -f technologies\rabbitmq_p2p\Dockerfile.consumer -t rabbitmq_p2p_co
 docker build -f technologies/nats_jetstream_p2p/Dockerfile.base -t nats_jetstream_p2p_base .
 docker build -f technologies/nats_jetstream_p2p/Dockerfile.publisher -t nats_jetstream_p2p_publisher .
 docker build -f technologies/nats_jetstream_p2p/Dockerfile.consumer -t nats_jetstream_p2p_consumer .
+
+docker build -f technologies/grpc_p2p/Dockerfile.base -t grpc_p2p_base .
+docker build -f technologies/grpc_p2p/Dockerfile.publisher -t grpc_p2p_publisher .
+docker build -f technologies/grpc_p2p/Dockerfile.consumer -t grpc_p2p_consumer .
