@@ -228,6 +228,9 @@ class ContainerManager:
 
             if tech_name.startswith("zeromq"):
                 environment["IO_THREADS"] = n_consumers if n_consumers is not None else 1
+            elif tech_name.startswith("grpc"):
+                # 3GB total queue size per consumer, can be tuned as needed
+                environment["GRPC_MAX_QUEUE_PER_CONSUMER"] = 3221225472 // message_size
 
             logger.debug(f"Environment: {environment}")
             logger.debug(
