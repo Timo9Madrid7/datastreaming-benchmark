@@ -1,9 +1,11 @@
 #include "GrpcPublisher.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <future>
 #include <stdexcept>
+#include <thread>
 #include <vector>
 
 #include "Logger.hpp"
@@ -50,10 +52,8 @@ void GrpcPublisher::initialize() {
 
 	try {
 		max_queue_per_consumer_ =
-		    static_cast<size_t>(std::stoul(queue_size_env));
-		if (max_queue_per_consumer_ == 0) {
-			max_queue_per_consumer_ = 1;
-		}
+		    std::max(static_cast<size_t>(std::stoul(queue_size_env)),
+		             static_cast<size_t>(1));
 	} catch (...) {
 		throw std::runtime_error(
 		    "[gRPC Publisher] Invalid GRPC_MAX_QUEUE_PER_CONSUMER: "
@@ -216,6 +216,7 @@ void GrpcPublisher::enqueue_to_subscriber_(
 	while (subscriber->queue.size() >= max_queue_per_consumer_) {
 		subscriber->queue.pop_front();
 	}
+
 	subscriber->queue.push_back(msg);
 	subscriber->cv.notify_one();
 }
@@ -223,6 +224,28 @@ void GrpcPublisher::enqueue_to_subscriber_(
 void GrpcPublisher::shutdown_server_() {
 	if (!server_started_) {
 		return;
+	}
+
+	// Ensure all pending enqueue tasks are completed before attempting a drain.
+	fanout_pool_.wait();
+	while (true) {
+		bool all_queues_empty = true;
+		{
+			std::lock_guard<std::mutex> lock(subscribers_mu_);
+			for (const auto &entry : subscribers_) {
+				std::lock_guard<std::mutex> subscriber_lock(entry.second->mu);
+				if (!entry.second->queue.empty()) {
+					all_queues_empty = false;
+					break;
+				}
+			}
+		}
+
+		if (all_queues_empty) {
+			break;
+		}
+
+		std::this_thread::sleep_for(std::chrono::seconds(1));
 	}
 
 	{
@@ -241,6 +264,4 @@ void GrpcPublisher::shutdown_server_() {
 		server_thread_.join();
 	}
 	server_started_ = false;
-
-	fanout_pool_.wait();
 }
