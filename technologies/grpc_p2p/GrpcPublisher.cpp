@@ -183,10 +183,7 @@ GrpcPublisher::DoGet(grpc::ServerContext *context,
 			continue;
 		}
 
-		grpc::WriteOptions write_options;
-		write_options.set_no_compression();
-		write_options.set_buffer_hint();
-		if (!writer->Write(*next, write_options)) {
+		if (!writer->Write(*next)) {
 			break;
 		}
 	}
