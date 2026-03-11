@@ -19,14 +19,27 @@ enum PayloadKind {
 //   bytes       body       = 4;
 // }
 
+// message WireMessage {
+//   string      topic      = 1;
+//   string      message_id = 2;
+//   PayloadKind kind       = 3;
+
+//   bytes           data    = 4;
+//   repeated double doubles = 5;
+//   repeated string strings = 6;
+// }
+
 message WireMessage {
   string      topic      = 1;
   string      message_id = 2;
   PayloadKind kind       = 3;
+  ActualData nested = 4 [lazy = true];
+}
 
-  bytes           data    = 4;
-  repeated double doubles = 5;
-  repeated string strings = 6;
+message ActualData {
+  bytes data = 1;
+  repeated double doubles = 2;
+  repeated string strings = 3;
 }
 
 // One-way message stream from publisher to consumer.

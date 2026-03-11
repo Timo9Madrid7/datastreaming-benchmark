@@ -4,9 +4,11 @@
 #include <grpcpp/grpcpp.h>
 #include <memory>
 #include <string>
+#include <thread>
 #include <unordered_set>
 
 #include "IConsumer.hpp"
+#include "readerwriterqueue.h"
 #include "streaming.grpc.pb.h"
 
 class Logger;
@@ -23,6 +25,10 @@ class GrpcConsumer : public IConsumer {
 
   private:
 	void close_stream_();
+	void start_worker_();
+	void stop_worker_();
+	void enqueue_latest_(std::shared_ptr<streaming::WireMessage> msg);
+	void worker_loop_();
 
 	std::string connect_endpoint_;
 	std::unordered_set<std::string> topics_;
@@ -32,6 +38,13 @@ class GrpcConsumer : public IConsumer {
 
 	std::unique_ptr<grpc::ClientContext> context_;
 	std::unique_ptr<grpc::ClientReader<streaming::WireMessage>> reader_;
+
+	std::unique_ptr<moodycamel::BlockingReaderWriterQueue<
+	    std::shared_ptr<streaming::WireMessage>>>
+	    queue_;
+	size_t queue_capacity_{1024};
+	std::thread worker_thread_;
+	std::atomic<bool> worker_running_{false};
 
 	std::atomic<bool> stop_receiving_{false};
 };

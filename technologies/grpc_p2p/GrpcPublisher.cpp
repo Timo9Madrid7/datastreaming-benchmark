@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <cstdlib>
 #include <future>
 #include <stdexcept>
@@ -91,24 +92,20 @@ void GrpcPublisher::send_message(const Payload &message, std::string &topic) {
 	wire.set_message_id(message.message_id);
 	wire.set_kind(static_cast<streaming::PayloadKind>(message.kind));
 	if (!message.bytes.empty()) {
-		wire.set_data(reinterpret_cast<const char *>(message.bytes.data()),
-		              message.bytes.size());
+		wire.mutable_nested()->set_data(
+		    reinterpret_cast<const char *>(message.bytes.data()),
+		    message.bytes.size());
 	}
 	if (message.kind == PayloadKind::COMPLEX) {
-		wire.mutable_doubles()->Add(message.nested_payload.doubles.begin(),
-		                            message.nested_payload.doubles.end());
-		wire.mutable_strings()->Add(message.nested_payload.strings.begin(),
-		                            message.nested_payload.strings.end());
+		wire.mutable_nested()->mutable_doubles()->Add(
+		    message.nested_payload.doubles.begin(),
+		    message.nested_payload.doubles.end());
+		wire.mutable_nested()->mutable_strings()->Add(
+		    message.nested_payload.strings.begin(),
+		    message.nested_payload.strings.end());
 	}
 
-	size_t wire_payload_size = wire.data().size();
-	wire_payload_size +=
-	    static_cast<size_t>(wire.doubles_size()) * sizeof(double);
-	for (const auto &s : wire.strings()) {
-		wire_payload_size += s.size();
-	}
-	const size_t wire_size =
-	    wire_payload_size + wire.message_id().size() + wire.topic().size();
+	const size_t wire_size = wire.ByteSizeLong();
 	auto shared_wire =
 	    std::make_shared<const streaming::WireMessage>(std::move(wire));
 
@@ -157,7 +154,8 @@ GrpcPublisher::DoGet(grpc::ServerContext *context,
 	std::shared_ptr<Subscriber> subscriber;
 	{
 		std::lock_guard<std::mutex> lock(subscribers_mu_);
-		subscriber = std::make_shared<Subscriber>(next_subscriber_id_++);
+		subscriber = std::make_shared<Subscriber>(next_subscriber_id_++,
+		                                          max_queue_per_consumer_);
 		subscribers_[subscriber->id] = subscriber;
 	}
 	logger->log_info("[gRPC Publisher] Consumer connected. subscriber_id="
@@ -166,14 +164,20 @@ GrpcPublisher::DoGet(grpc::ServerContext *context,
 	while (!context->IsCancelled()) {
 		std::shared_ptr<const streaming::WireMessage> next;
 		{
-			std::unique_lock<std::mutex> lock(subscriber->mu);
-			subscriber->cv.wait(lock, [&]() {
-				return subscriber->closed || !subscriber->queue.empty()
-				    || context->IsCancelled();
-			});
+			std::unique_lock<std::mutex> qlock(subscriber->queue_mu);
+			subscriber->queue_cv.wait_for(
+			    qlock, std::chrono::milliseconds(50), [&subscriber, context]() {
+				    return !subscriber->queue.empty()
+				        || subscriber->closed.load(std::memory_order_acquire)
+				        || context->IsCancelled();
+			    });
 
-			if (subscriber->closed || context->IsCancelled()) {
-				break;
+			if (subscriber->queue.empty()) {
+				if (subscriber->closed.load(std::memory_order_acquire)
+				    || context->IsCancelled()) {
+					break;
+				}
+				continue;
 			}
 
 			next = subscriber->queue.front();
@@ -193,12 +197,8 @@ GrpcPublisher::DoGet(grpc::ServerContext *context,
 		std::lock_guard<std::mutex> lock(subscribers_mu_);
 		subscribers_.erase(subscriber->id);
 	}
-
-	{
-		std::lock_guard<std::mutex> lock(subscriber->mu);
-		subscriber->closed = true;
-	}
-	subscriber->cv.notify_all();
+	subscriber->closed.store(true, std::memory_order_release);
+	subscriber->queue_cv.notify_all();
 
 	logger->log_info("[gRPC Publisher] Consumer disconnected. subscriber_id="
 	                 + std::to_string(subscriber->id));
@@ -208,17 +208,23 @@ GrpcPublisher::DoGet(grpc::ServerContext *context,
 void GrpcPublisher::enqueue_to_subscriber_(
     const std::shared_ptr<Subscriber> &subscriber,
     const std::shared_ptr<const streaming::WireMessage> &msg) {
-	std::lock_guard<std::mutex> lock(subscriber->mu);
-	if (subscriber->closed) {
+	if (subscriber->closed.load(std::memory_order_acquire)) {
 		return;
 	}
 
-	while (subscriber->queue.size() >= max_queue_per_consumer_) {
-		subscriber->queue.pop_front();
-	}
+	{
+		std::lock_guard<std::mutex> qlock(subscriber->queue_mu);
+		if (subscriber->closed.load(std::memory_order_acquire)) {
+			return;
+		}
 
-	subscriber->queue.push_back(msg);
-	subscriber->cv.notify_one();
+		if (subscriber->queue.size() >= subscriber->capacity
+		    && !subscriber->queue.empty()) {
+			subscriber->queue.pop_front();
+		}
+		subscriber->queue.push_back(msg);
+	}
+	subscriber->queue_cv.notify_one();
 }
 
 void GrpcPublisher::shutdown_server_() {
@@ -233,7 +239,7 @@ void GrpcPublisher::shutdown_server_() {
 		{
 			std::lock_guard<std::mutex> lock(subscribers_mu_);
 			for (const auto &entry : subscribers_) {
-				std::lock_guard<std::mutex> subscriber_lock(entry.second->mu);
+				std::lock_guard<std::mutex> qlock(entry.second->queue_mu);
 				if (!entry.second->queue.empty()) {
 					all_queues_empty = false;
 					break;
@@ -251,9 +257,8 @@ void GrpcPublisher::shutdown_server_() {
 	{
 		std::lock_guard<std::mutex> lock(subscribers_mu_);
 		for (auto &entry : subscribers_) {
-			std::lock_guard<std::mutex> subscriber_lock(entry.second->mu);
-			entry.second->closed = true;
-			entry.second->cv.notify_all();
+			entry.second->closed.store(true, std::memory_order_release);
+			entry.second->queue_cv.notify_all();
 		}
 	}
 
