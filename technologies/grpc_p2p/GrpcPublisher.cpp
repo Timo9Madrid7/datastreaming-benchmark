@@ -86,20 +86,29 @@ void GrpcPublisher::send_message(const Payload &message, std::string &topic) {
 
 	logger->log_study("Serializing," + message.message_id + "," + topic);
 
-	const size_t serialized_size = message.serialized_bytes;
-	std::string body(serialized_size, '\0');
-	if (!Payload::serialize(message, body.data())) {
-		logger->log_error(
-		    "[gRPC Publisher] Serialization failed for message ID: "
-		    + message.message_id);
-		return;
-	}
-
 	streaming::WireMessage wire;
 	wire.set_topic(topic);
 	wire.set_message_id(message.message_id);
 	wire.set_kind(static_cast<streaming::PayloadKind>(message.kind));
-	wire.set_body(body.data(), body.size());
+	if (!message.bytes.empty()) {
+		wire.set_data(reinterpret_cast<const char *>(message.bytes.data()),
+		              message.bytes.size());
+	}
+	if (message.kind == PayloadKind::COMPLEX) {
+		wire.mutable_doubles()->Add(message.nested_payload.doubles.begin(),
+		                            message.nested_payload.doubles.end());
+		wire.mutable_strings()->Add(message.nested_payload.strings.begin(),
+		                            message.nested_payload.strings.end());
+	}
+
+	size_t wire_payload_size = wire.data().size();
+	wire_payload_size +=
+	    static_cast<size_t>(wire.doubles_size()) * sizeof(double);
+	for (const auto &s : wire.strings()) {
+		wire_payload_size += s.size();
+	}
+	const size_t wire_size =
+	    wire_payload_size + wire.message_id().size() + wire.topic().size();
 	auto shared_wire =
 	    std::make_shared<const streaming::WireMessage>(std::move(wire));
 
@@ -126,7 +135,7 @@ void GrpcPublisher::send_message(const Payload &message, std::string &topic) {
 
 	logger->log_study("Publication," + message.message_id + "," + topic + ","
 	                  + std::to_string(message.data_size) + ","
-	                  + std::to_string(serialized_size));
+	                  + std::to_string(wire_size));
 }
 
 void GrpcPublisher::log_configuration() {

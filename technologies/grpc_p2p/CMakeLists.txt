@@ -55,6 +55,10 @@ add_custom_command(
       DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/streaming.proto
 )
 
+add_custom_target(generate_grpc_protos 
+    DEPENDS ${PROTO_SRC} ${PROTO_HEADER} ${GRPC_SRC} ${GRPC_HEADER}
+)
+
 target_sources(grpc_p2p_technology PRIVATE
     ${PROTO_SRC}
     ${GRPC_SRC}

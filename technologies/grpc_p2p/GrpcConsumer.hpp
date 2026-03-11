@@ -6,7 +6,6 @@
 #include <string>
 #include <unordered_set>
 
-#include "Deserializer.hpp"
 #include "IConsumer.hpp"
 #include "streaming.grpc.pb.h"
 
@@ -34,6 +33,5 @@ class GrpcConsumer : public IConsumer {
 	std::unique_ptr<grpc::ClientContext> context_;
 	std::unique_ptr<grpc::ClientReader<streaming::WireMessage>> reader_;
 
-	utils::Deserializer deserializer_;
 	std::atomic<bool> stop_receiving_{false};
 };

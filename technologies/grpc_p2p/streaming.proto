@@ -12,11 +12,21 @@ enum PayloadKind {
   COMPLEX     = 2;
 }
 
+// message WireMessage {
+//   string      topic      = 1;
+//   string      message_id = 2;
+//   PayloadKind kind       = 3;
+//   bytes       body       = 4;
+// }
+
 message WireMessage {
   string      topic      = 1;
   string      message_id = 2;
   PayloadKind kind       = 3;
-  bytes       body       = 4;
+
+  bytes           data    = 4;
+  repeated double doubles = 5;
+  repeated string strings = 6;
 }
 
 // One-way message stream from publisher to consumer.
