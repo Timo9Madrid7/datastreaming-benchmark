@@ -20,6 +20,7 @@ GrpcConsumer::GrpcConsumer(std::shared_ptr<Logger> logger) : IConsumer(logger) {
 GrpcConsumer::~GrpcConsumer() {
 	logger->log_debug("[gRPC Consumer] Cleaning up gRPC consumer...");
 	stop_receiving_.store(true, std::memory_order_release);
+	stop_worker_();
 	close_stream_();
 	logger->log_debug("[gRPC Consumer] Destructor finished.");
 }
@@ -63,6 +64,20 @@ void GrpcConsumer::initialize() {
 		throw std::runtime_error("[gRPC Consumer] No valid topics provided.");
 	}
 
+	const std::string queue_capacity_env =
+	    utils::get_env_var_or_default("GRPC_CONSUMER_QUEUE_SIZE", "1024");
+	try {
+		queue_capacity_ =
+		    std::max(static_cast<size_t>(std::stoul(queue_capacity_env)),
+		             static_cast<size_t>(1));
+	} catch (...) {
+		throw std::runtime_error(
+		    "[gRPC Consumer] Invalid GRPC_CONSUMER_QUEUE_SIZE: "
+		    + queue_capacity_env);
+	}
+	queue_ = std::make_unique<moodycamel::BlockingReaderWriterQueue<
+	    std::shared_ptr<streaming::WireMessage>>>(queue_capacity_);
+
 	grpc::ChannelArguments channel_args;
 	channel_args.SetMaxReceiveMessageSize(16 * 1024 * 1024);
 	channel_ = grpc::CreateCustomChannel(
@@ -102,6 +117,8 @@ void GrpcConsumer::subscribe(const std::string &topic) {
 }
 
 void GrpcConsumer::start_loop() {
+	start_worker_();
+
 	while (!stop_receiving_.load(std::memory_order_acquire)) {
 		context_ = std::make_unique<grpc::ClientContext>();
 		google::protobuf::Empty request;
@@ -121,38 +138,11 @@ void GrpcConsumer::start_loop() {
 				continue;
 			}
 
-			std::string message_id = msg.message_id();
-			const PayloadKind kind = static_cast<PayloadKind>(msg.kind());
-			size_t payload_size = msg.data().size();
-			payload_size +=
-			    static_cast<size_t>(msg.doubles_size()) * sizeof(double);
-			for (const auto &s : msg.strings()) {
-				payload_size += s.size();
-			}
-			const size_t wire_size =
-			    payload_size + message_id.size() + topic.size();
-
-			logger->log_study("Reception," + message_id + "," + topic + ","
-			                  + std::to_string(payload_size) + ","
-			                  + std::to_string(wire_size));
-
-			if (kind == PayloadKind::TERMINATION) {
-				subscribed_streams.dec();
-				logger->log_info(
-				    "[gRPC Consumer] Termination signal received for "
-				    "message ID: "
-				    + message_id);
-				if (subscribed_streams.get() == 0) {
-					logger->log_info(
-					    "[gRPC Consumer] All streams terminated. Exiting.");
-					stop_receiving_.store(true, std::memory_order_release);
-					close_stream_();
-				}
-				logger->log_info(
-				    "[gRPC Consumer] Remaining subscribed streams: "
-				    + std::to_string(subscribed_streams.get()));
-			}
-
+			auto holder =
+			    std::make_shared<streaming::WireMessage>(std::move(msg));
+			logger->log_study("Reception," + holder->message_id() + ","
+			                  + topic);
+			enqueue_latest_(std::move(holder));
 			msg.Clear();
 		}
 
@@ -168,6 +158,7 @@ void GrpcConsumer::start_loop() {
 			std::this_thread::sleep_for(std::chrono::milliseconds(200));
 		}
 	}
+	stop_worker_();
 	close_stream_();
 }
 
@@ -179,11 +170,104 @@ void GrpcConsumer::log_configuration() {
 	    + utils::get_env_var_or_default("PUBLISHER_ENDPOINTS", ""));
 	logger->log_config("[CONFIG] TOPICS="
 	                   + utils::get_env_var_or_default("TOPICS", ""));
+	logger->log_config("[CONFIG] GRPC_CONSUMER_QUEUE_SIZE="
+	                   + std::to_string(queue_capacity_));
 	logger->log_config("[gRPC Consumer] [CONFIG_END]");
 }
 
 void GrpcConsumer::close_stream_() {
 	if (context_) {
 		context_->TryCancel();
+	}
+}
+
+void GrpcConsumer::start_worker_() {
+	if (worker_running_.exchange(true, std::memory_order_acq_rel)) {
+		return;
+	}
+	worker_thread_ = std::thread([this]() { worker_loop_(); });
+}
+
+void GrpcConsumer::stop_worker_() {
+	if (!worker_running_.exchange(false, std::memory_order_acq_rel)) {
+		return;
+	}
+	if (worker_thread_.joinable()) {
+		worker_thread_.join();
+	}
+	if (queue_) {
+		std::shared_ptr<streaming::WireMessage> dropped;
+		while (queue_->try_dequeue(dropped)) {
+		}
+	}
+}
+
+void GrpcConsumer::enqueue_latest_(
+    std::shared_ptr<streaming::WireMessage> msg) {
+	if (!queue_) {
+		return;
+	}
+
+	if (queue_->try_enqueue(std::move(msg))) {
+		return;
+	}
+
+	// Queue full: drop the earliest pending item and enqueue the latest one.
+	std::shared_ptr<streaming::WireMessage> dropped;
+	(void)queue_->try_dequeue(dropped);
+	if (!queue_->try_enqueue(std::move(msg))) {
+		logger->log_error(
+		    "[gRPC Consumer] Failed to enqueue latest message after "
+		    "dropping oldest.");
+	}
+}
+
+void GrpcConsumer::worker_loop_() {
+	if (!queue_) {
+		return;
+	}
+
+	while (worker_running_.load(std::memory_order_acquire)
+	       || queue_->size_approx() > 0) {
+		std::shared_ptr<streaming::WireMessage> msg;
+		if (!queue_->wait_dequeue_timed(msg, std::chrono::milliseconds(50))) {
+			if (!worker_running_.load(std::memory_order_acquire)
+			    && queue_->size_approx() == 0) {
+				break;
+			}
+			continue;
+		}
+
+		const std::string &topic = msg->topic();
+		const std::string &message_id = msg->message_id();
+		const PayloadKind kind = static_cast<PayloadKind>(msg->kind());
+
+		const streaming::ActualData &nested = msg->nested();
+		size_t payload_size = nested.data().size();
+		payload_size +=
+		    static_cast<size_t>(nested.doubles_size()) * sizeof(double);
+		for (const auto &s : nested.strings()) {
+			payload_size += s.size();
+		}
+		const size_t wire_size = msg->ByteSizeLong();
+
+		logger->log_study("Deserialized," + message_id + "," + topic + ","
+		                  + std::to_string(payload_size) + ","
+		                  + std::to_string(wire_size));
+
+		if (kind == PayloadKind::TERMINATION) {
+			subscribed_streams.dec();
+			logger->log_info("[gRPC Consumer] Termination signal received for "
+			                 "message ID: "
+			                 + message_id);
+			if (subscribed_streams.get() == 0) {
+				logger->log_info(
+				    "[gRPC Consumer] All streams terminated. Exiting.");
+				stop_receiving_.store(true, std::memory_order_release);
+				close_stream_();
+			}
+			logger->log_info("[gRPC Consumer] Remaining subscribed streams: "
+			                 + std::to_string(subscribed_streams.get()));
+		}
 	}
 }

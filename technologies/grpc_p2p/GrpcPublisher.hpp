@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
@@ -32,14 +33,16 @@ class GrpcPublisher : public IPublisher, public streaming::Streamer::Service {
 
   private:
 	struct Subscriber {
-		explicit Subscriber(uint64_t sid) : id(sid) {
+		explicit Subscriber(uint64_t sid, size_t capacity)
+		    : id(sid), capacity(capacity) {
 		}
 
 		uint64_t id;
-		std::mutex mu;
-		std::condition_variable cv;
+		size_t capacity;
+		std::mutex queue_mu;
+		std::condition_variable queue_cv;
 		std::deque<std::shared_ptr<const streaming::WireMessage>> queue;
-		bool closed{false};
+		std::atomic<bool> closed{false};
 	};
 
 	void enqueue_to_subscriber_(
