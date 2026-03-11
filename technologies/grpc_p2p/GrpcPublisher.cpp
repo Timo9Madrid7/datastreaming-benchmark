@@ -1,9 +1,11 @@
 #include "GrpcPublisher.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <future>
 #include <stdexcept>
+#include <thread>
 #include <vector>
 
 #include "Logger.hpp"
@@ -48,17 +50,17 @@ void GrpcPublisher::initialize() {
 		    + fanout_threads_env);
 	}
 
-	try {
-		max_queue_per_consumer_ =
-		    static_cast<size_t>(std::stoul(queue_size_env));
-		if (max_queue_per_consumer_ == 0) {
-			max_queue_per_consumer_ = 1;
-		}
-	} catch (...) {
-		throw std::runtime_error(
-		    "[gRPC Publisher] Invalid GRPC_MAX_QUEUE_PER_CONSUMER: "
-		    + queue_size_env);
-	}
+	// try {
+	// 	max_queue_per_consumer_ =
+	// 	    static_cast<size_t>(std::stoul(queue_size_env));
+	// 	if (max_queue_per_consumer_ == 0) {
+	// 		max_queue_per_consumer_ = 1;
+	// 	}
+	// } catch (...) {
+	// 	throw std::runtime_error(
+	// 	    "[gRPC Publisher] Invalid GRPC_MAX_QUEUE_PER_CONSUMER: "
+	// 	    + queue_size_env);
+	// }
 
 	grpc::ServerBuilder builder;
 	builder.AddListeningPort(endpoint_, grpc::InsecureServerCredentials());
@@ -143,8 +145,8 @@ void GrpcPublisher::log_configuration() {
 	logger->log_config("[CONFIG] ENDPOINT=" + endpoint_);
 	logger->log_config("[CONFIG] GRPC_FANOUT_THREADS="
 	                   + std::to_string(fanout_pool_.get_thread_count()));
-	logger->log_config("[CONFIG] GRPC_MAX_QUEUE_PER_CONSUMER="
-	                   + std::to_string(max_queue_per_consumer_));
+	// logger->log_config("[CONFIG] GRPC_MAX_QUEUE_PER_CONSUMER="
+	//                    + std::to_string(max_queue_per_consumer_));
 	logger->log_config("[CONFIG] TOPICS="
 	                   + utils::get_env_var_or_default("TOPICS", ""));
 	logger->log_config("[gRPC Publisher] [CONFIG_END]");
@@ -213,9 +215,10 @@ void GrpcPublisher::enqueue_to_subscriber_(
 		return;
 	}
 
-	while (subscriber->queue.size() >= max_queue_per_consumer_) {
-		subscriber->queue.pop_front();
-	}
+	// while (subscriber->queue.size() >= max_queue_per_consumer_) {
+	// 	subscriber->queue.pop_front();
+	// }
+
 	subscriber->queue.push_back(msg);
 	subscriber->cv.notify_one();
 }
@@ -223,6 +226,28 @@ void GrpcPublisher::enqueue_to_subscriber_(
 void GrpcPublisher::shutdown_server_() {
 	if (!server_started_) {
 		return;
+	}
+
+	// Ensure all pending enqueue tasks are completed before attempting a drain.
+	fanout_pool_.wait();
+	while (true) {
+		bool all_queues_empty = true;
+		{
+			std::lock_guard<std::mutex> lock(subscribers_mu_);
+			for (const auto &entry : subscribers_) {
+				std::lock_guard<std::mutex> subscriber_lock(entry.second->mu);
+				if (!entry.second->queue.empty()) {
+					all_queues_empty = false;
+					break;
+				}
+			}
+		}
+
+		if (all_queues_empty) {
+			break;
+		}
+
+		std::this_thread::sleep_for(std::chrono::seconds(1));
 	}
 
 	{
@@ -241,6 +266,4 @@ void GrpcPublisher::shutdown_server_() {
 		server_thread_.join();
 	}
 	server_started_ = false;
-
-	fanout_pool_.wait();
 }

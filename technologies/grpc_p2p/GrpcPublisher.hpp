@@ -48,7 +48,7 @@ class GrpcPublisher : public IPublisher, public streaming::Streamer::Service {
 	void shutdown_server_();
 
 	std::string endpoint_;
-	size_t max_queue_per_consumer_{1024};
+	// size_t max_queue_per_consumer_{1024};
 
 	std::unique_ptr<grpc::Server> server_;
 	std::thread server_thread_;
