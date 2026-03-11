@@ -4,7 +4,6 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdlib>
-#include <future>
 #include <stdexcept>
 #include <thread>
 #include <vector>
@@ -118,17 +117,13 @@ void GrpcPublisher::send_message(const Payload &message, std::string &topic) {
 		}
 	}
 
-	std::vector<std::future<void>> fanout_tasks;
-	fanout_tasks.reserve(subscribers.size());
 	for (const auto &subscriber : subscribers) {
-		fanout_tasks.push_back(
-		    fanout_pool_.submit_task([this, subscriber, shared_wire]() {
-			    enqueue_to_subscriber_(subscriber, shared_wire);
-		    }));
+		fanout_pool_.detach_task([this, subscriber, shared_wire]() {
+			enqueue_to_subscriber_(subscriber, shared_wire);
+		});
 	}
-	for (auto &task : fanout_tasks) {
-		task.wait();
-	}
+	// Ensure the message is enqueued to all current subscribers before logging Publication.
+	fanout_pool_.wait();
 
 	logger->log_study("Publication," + message.message_id + "," + topic + ","
 	                  + std::to_string(message.data_size) + ","
