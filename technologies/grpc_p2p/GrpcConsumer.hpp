@@ -1,14 +1,16 @@
 #pragma once
 
 #include <atomic>
+#include <condition_variable>
+#include <deque>
 #include <grpcpp/grpcpp.h>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <unordered_set>
 
 #include "IConsumer.hpp"
-#include "readerwriterqueue.h"
 #include "streaming.grpc.pb.h"
 
 class Logger;
@@ -27,8 +29,9 @@ class GrpcConsumer : public IConsumer {
 	void close_stream_();
 	void start_worker_();
 	void stop_worker_();
-	void enqueue_latest_(std::shared_ptr<streaming::WireMessage> msg);
+	bool enqueue_for_worker_(std::shared_ptr<streaming::WireMessage> msg);
 	void worker_loop_();
+	void process_message_(const streaming::WireMessage &msg);
 
 	std::string connect_endpoint_;
 	std::unordered_set<std::string> topics_;
@@ -36,12 +39,13 @@ class GrpcConsumer : public IConsumer {
 	std::shared_ptr<grpc::Channel> channel_;
 	std::unique_ptr<streaming::Streamer::Stub> stub_;
 
+	std::mutex stream_mu_;
 	std::unique_ptr<grpc::ClientContext> context_;
-	std::unique_ptr<grpc::ClientReader<streaming::WireMessage>> reader_;
+	std::unique_ptr<grpc::ClientReader<streaming::WireBatch>> reader_;
 
-	std::unique_ptr<moodycamel::BlockingReaderWriterQueue<
-	    std::shared_ptr<streaming::WireMessage>>>
-	    queue_;
+	std::mutex queue_mu_;
+	std::condition_variable queue_cv_;
+	std::deque<std::shared_ptr<streaming::WireMessage>> queue_;
 	size_t queue_capacity_{1024};
 	std::thread worker_thread_;
 	std::atomic<bool> worker_running_{false};

@@ -75,11 +75,9 @@ void GrpcConsumer::initialize() {
 		    "[gRPC Consumer] Invalid GRPC_CONSUMER_QUEUE_SIZE: "
 		    + queue_capacity_env);
 	}
-	queue_ = std::make_unique<moodycamel::BlockingReaderWriterQueue<
-	    std::shared_ptr<streaming::WireMessage>>>(queue_capacity_);
 
 	grpc::ChannelArguments channel_args;
-	channel_args.SetMaxReceiveMessageSize(16 * 1024 * 1024);
+	channel_args.SetMaxReceiveMessageSize(32 * 1024 * 1024);
 	channel_ = grpc::CreateCustomChannel(
 	    connect_endpoint_, grpc::InsecureChannelCredentials(), channel_args);
 
@@ -120,30 +118,43 @@ void GrpcConsumer::start_loop() {
 	start_worker_();
 
 	while (!stop_receiving_.load(std::memory_order_acquire)) {
-		context_ = std::make_unique<grpc::ClientContext>();
+		{
+			std::lock_guard<std::mutex> lock(stream_mu_);
+			context_ = std::make_unique<grpc::ClientContext>();
+		}
 		google::protobuf::Empty request;
-		reader_ = stub_->DoGet(context_.get(), request);
+		{
+			std::lock_guard<std::mutex> lock(stream_mu_);
+			reader_ = stub_->DoGet(context_.get(), request);
+		}
 		if (!reader_) {
 			logger->log_error("[gRPC Consumer] Failed to open DoGet stream.");
 			std::this_thread::sleep_for(std::chrono::milliseconds(500));
 			continue;
 		}
 
-		streaming::WireMessage msg;
+		streaming::WireBatch batch;
 		while (!stop_receiving_.load(std::memory_order_acquire)
-		       && reader_->Read(&msg)) {
-			const std::string topic = msg.topic();
-			if (topics_.find(topic) == topics_.end()) {
-				msg.Clear();
-				continue;
-			}
+		       && reader_->Read(&batch)) {
+			for (const auto &msg : batch.messages()) {
+				if (stop_receiving_.load(std::memory_order_acquire)) {
+					break;
+				}
 
-			auto holder =
-			    std::make_shared<streaming::WireMessage>(std::move(msg));
-			logger->log_study("Reception," + holder->message_id() + ","
-			                  + topic);
-			enqueue_latest_(std::move(holder));
-			msg.Clear();
+				const std::string &topic = msg.topic();
+				if (topics_.find(topic) == topics_.end()) {
+					continue;
+				}
+
+				logger->log_study("Reception," + msg.message_id() + ","
+				                  + topic);
+
+				auto holder = std::make_shared<streaming::WireMessage>(msg);
+				if (!enqueue_for_worker_(std::move(holder))) {
+					break;
+				}
+			}
+			batch.Clear();
 		}
 
 		const grpc::Status status = reader_->Finish();
@@ -152,12 +163,16 @@ void GrpcConsumer::start_loop() {
 			                  + status.error_message());
 		}
 
-		reader_.reset();
-		context_.reset();
+		{
+			std::lock_guard<std::mutex> lock(stream_mu_);
+			reader_.reset();
+			context_.reset();
+		}
 		if (!stop_receiving_.load(std::memory_order_acquire)) {
 			std::this_thread::sleep_for(std::chrono::milliseconds(200));
 		}
 	}
+
 	stop_worker_();
 	close_stream_();
 }
@@ -172,10 +187,13 @@ void GrpcConsumer::log_configuration() {
 	                   + utils::get_env_var_or_default("TOPICS", ""));
 	logger->log_config("[CONFIG] GRPC_CONSUMER_QUEUE_SIZE="
 	                   + std::to_string(queue_capacity_));
+	logger->log_config(
+	    "[CONFIG] MESSAGE_HANDLING=batch_receive_async_deserialize");
 	logger->log_config("[gRPC Consumer] [CONFIG_END]");
 }
 
 void GrpcConsumer::close_stream_() {
+	std::lock_guard<std::mutex> lock(stream_mu_);
 	if (context_) {
 		context_->TryCancel();
 	}
@@ -192,82 +210,88 @@ void GrpcConsumer::stop_worker_() {
 	if (!worker_running_.exchange(false, std::memory_order_acq_rel)) {
 		return;
 	}
+	queue_cv_.notify_all();
 	if (worker_thread_.joinable()) {
 		worker_thread_.join();
 	}
-	if (queue_) {
-		std::shared_ptr<streaming::WireMessage> dropped;
-		while (queue_->try_dequeue(dropped)) {
-		}
-	}
 }
 
-void GrpcConsumer::enqueue_latest_(
+bool GrpcConsumer::enqueue_for_worker_(
     std::shared_ptr<streaming::WireMessage> msg) {
-	if (!queue_) {
-		return;
+	std::unique_lock<std::mutex> lock(queue_mu_);
+	queue_cv_.wait(lock, [this]() {
+		return stop_receiving_.load(std::memory_order_acquire)
+		    || queue_.size() < queue_capacity_;
+	});
+
+	if (stop_receiving_.load(std::memory_order_acquire)) {
+		return false;
 	}
 
-	if (queue_->try_enqueue(std::move(msg))) {
-		return;
-	}
-
-	// Queue full: drop the earliest pending item and enqueue the latest one.
-	std::shared_ptr<streaming::WireMessage> dropped;
-	(void)queue_->try_dequeue(dropped);
-	if (!queue_->try_enqueue(std::move(msg))) {
-		logger->log_error(
-		    "[gRPC Consumer] Failed to enqueue latest message after "
-		    "dropping oldest.");
-	}
+	queue_.push_back(std::move(msg));
+	queue_cv_.notify_all();
+	return true;
 }
 
 void GrpcConsumer::worker_loop_() {
-	if (!queue_) {
-		return;
-	}
-
-	while (worker_running_.load(std::memory_order_acquire)
-	       || queue_->size_approx() > 0) {
+	while (true) {
 		std::shared_ptr<streaming::WireMessage> msg;
-		if (!queue_->wait_dequeue_timed(msg, std::chrono::milliseconds(50))) {
-			if (!worker_running_.load(std::memory_order_acquire)
-			    && queue_->size_approx() == 0) {
-				break;
+		{
+			std::unique_lock<std::mutex> lock(queue_mu_);
+			queue_cv_.wait(lock, [this]() {
+				return !worker_running_.load(std::memory_order_acquire)
+				    || !queue_.empty();
+			});
+
+			if (queue_.empty()) {
+				if (!worker_running_.load(std::memory_order_acquire)) {
+					break;
+				}
+				continue;
 			}
-			continue;
+
+			msg = std::move(queue_.front());
+			queue_.pop_front();
+			queue_cv_.notify_all();
 		}
 
-		const std::string &topic = msg->topic();
-		const std::string &message_id = msg->message_id();
-		const PayloadKind kind = static_cast<PayloadKind>(msg->kind());
-
-		const streaming::ActualData &nested = msg->nested();
-		size_t payload_size = nested.data().size();
-		payload_size +=
-		    static_cast<size_t>(nested.doubles_size()) * sizeof(double);
-		for (const auto &s : nested.strings()) {
-			payload_size += s.size();
+		if (msg) {
+			process_message_(*msg);
 		}
-		const size_t wire_size = msg->ByteSizeLong();
+	}
+}
 
-		logger->log_study("Deserialized," + message_id + "," + topic + ","
-		                  + std::to_string(payload_size) + ","
-		                  + std::to_string(wire_size));
+void GrpcConsumer::process_message_(const streaming::WireMessage &msg) {
+	const std::string &topic = msg.topic();
+	const std::string &message_id = msg.message_id();
+	const PayloadKind kind = static_cast<PayloadKind>(msg.kind());
 
-		if (kind == PayloadKind::TERMINATION) {
-			subscribed_streams.dec();
-			logger->log_info("[gRPC Consumer] Termination signal received for "
-			                 "message ID: "
-			                 + message_id);
-			if (subscribed_streams.get() == 0) {
-				logger->log_info(
-				    "[gRPC Consumer] All streams terminated. Exiting.");
-				stop_receiving_.store(true, std::memory_order_release);
-				close_stream_();
-			}
-			logger->log_info("[gRPC Consumer] Remaining subscribed streams: "
-			                 + std::to_string(subscribed_streams.get()));
+	const streaming::ActualData &nested = msg.nested();
+	size_t payload_size = nested.data().size();
+	payload_size += static_cast<size_t>(nested.doubles_size()) * sizeof(double);
+	for (const auto &s : nested.strings()) {
+		payload_size += s.size();
+	}
+	const size_t serialized_size =
+	    payload_size + topic.size() + message_id.size() + sizeof(uint8_t);
+
+	logger->log_study("Deserialized," + message_id + "," + topic + ","
+	                  + std::to_string(payload_size) + ","
+	                  + std::to_string(serialized_size));
+
+	if (kind == PayloadKind::TERMINATION) {
+		subscribed_streams.dec();
+		logger->log_info("[gRPC Consumer] Termination signal received for "
+		                 "message ID: "
+		                 + message_id);
+		if (subscribed_streams.get() == 0) {
+			logger->log_info(
+			    "[gRPC Consumer] All streams terminated. Exiting.");
+			stop_receiving_.store(true, std::memory_order_release);
+			queue_cv_.notify_all();
+			close_stream_();
 		}
+		logger->log_info("[gRPC Consumer] Remaining subscribed streams: "
+		                 + std::to_string(subscribed_streams.get()));
 	}
 }

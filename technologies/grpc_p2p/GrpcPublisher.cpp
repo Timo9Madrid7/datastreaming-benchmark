@@ -3,10 +3,11 @@
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
-#include <cstdlib>
+#include <cstdint>
+#include <limits>
+#include <optional>
 #include <stdexcept>
 #include <thread>
-#include <vector>
 
 #include "Logger.hpp"
 #include "Payload.hpp"
@@ -33,37 +34,39 @@ void GrpcPublisher::initialize() {
 	    utils::get_env_var_or_default("PUBLISHER_PORT", "50051");
 	endpoint_ = endpoint + ":" + port;
 
-	const std::string fanout_threads_env =
-	    utils::get_env_var_or_default("GRPC_FANOUT_THREADS", "5");
-	const std::string queue_size_env =
-	    utils::get_env_var_or_default("GRPC_MAX_QUEUE_PER_CONSUMER", "1024");
-
+	const std::string shared_queue_env =
+	    utils::get_env_var_or_default("GRPC_MAX_SHARED_QUEUE_BATCHES", "1024");
+	const std::optional<std::string> payload_size_str =
+	    utils::get_env_var("PAYLOAD_SIZE");
 	try {
-		const int fanout_threads = std::max(1, std::stoi(fanout_threads_env));
-		if (static_cast<size_t>(fanout_threads)
-		    != fanout_pool_.get_thread_count()) {
-			fanout_pool_.reset(static_cast<size_t>(fanout_threads));
-		}
-	} catch (...) {
-		throw std::runtime_error(
-		    "[gRPC Publisher] Invalid GRPC_FANOUT_THREADS: "
-		    + fanout_threads_env);
-	}
-
-	try {
-		max_queue_per_consumer_ =
-		    std::max(static_cast<size_t>(std::stoul(queue_size_env)),
+		max_shared_queue_batches_ =
+		    std::max(static_cast<size_t>(std::stoul(shared_queue_env)),
 		             static_cast<size_t>(1));
 	} catch (...) {
 		throw std::runtime_error(
-		    "[gRPC Publisher] Invalid GRPC_MAX_QUEUE_PER_CONSUMER: "
-		    + queue_size_env);
+		    "[gRPC Publisher] Invalid GRPC_MAX_SHARED_QUEUE_BATCHES: "
+		    + shared_queue_env);
+	}
+
+	if (!payload_size_str) {
+		throw std::runtime_error(
+		    "[gRPC Publisher] PAYLOAD_SIZE environment variable is not set.");
+	}
+
+	try {
+		const uint64_t payload_size = std::stoull(payload_size_str.value());
+		max_batch_bytes_ = (payload_size >= 4ULL * 1024ULL * 1024ULL)
+		    ? (16ULL * 1024ULL * 1024ULL)
+		    : (8ULL * 1024ULL * 1024ULL);
+	} catch (...) {
+		throw std::runtime_error(
+		    "[gRPC Publisher] Invalid PAYLOAD_SIZE: " + payload_size_str.value());
 	}
 
 	grpc::ServerBuilder builder;
 	builder.AddListeningPort(endpoint_, grpc::InsecureServerCredentials());
 	builder.RegisterService(this);
-	builder.SetMaxSendMessageSize(16 * 1024 * 1024);
+	builder.SetMaxSendMessageSize(32 * 1024 * 1024);
 
 	server_ = builder.BuildAndStart();
 	if (!server_) {
@@ -72,10 +75,62 @@ void GrpcPublisher::initialize() {
 	}
 
 	server_started_ = true;
+	shutting_down_.store(false, std::memory_order_release);
 	server_thread_ = std::thread([this]() { server_->Wait(); });
 
 	logger->log_info("[gRPC Publisher] Publisher initialized.");
 	log_configuration();
+}
+
+void GrpcPublisher::add_message_to_pending_batch_(const Payload &message,
+                                                  const std::string &topic,
+                                                  size_t row_size_bytes) {
+	streaming::WireMessage *wire = pending_batch_.add_messages();
+	wire->set_topic(topic);
+	wire->set_message_id(message.message_id);
+	wire->set_kind(static_cast<streaming::PayloadKind>(message.kind));
+	if (!message.bytes.empty()) {
+		wire->mutable_nested()->set_data(
+		    reinterpret_cast<const char *>(message.bytes.data()),
+		    message.bytes.size());
+	}
+	if (message.kind == PayloadKind::COMPLEX) {
+		wire->mutable_nested()->mutable_doubles()->Add(
+		    message.nested_payload.doubles.begin(),
+		    message.nested_payload.doubles.end());
+		wire->mutable_nested()->mutable_strings()->Add(
+		    message.nested_payload.strings.begin(),
+		    message.nested_payload.strings.end());
+	}
+
+	pending_batch_bytes_ += row_size_bytes;
+	pending_publication_logs_.push_back("Publication," + message.message_id
+	                                    + "," + topic + ","
+	                                    + std::to_string(message.data_size)
+	                                    + "," + std::to_string(row_size_bytes));
+}
+
+void GrpcPublisher::flush_pending_batch_locked_(bool /*is_termination_batch*/) {
+	if (pending_batch_.messages_size() == 0) {
+		return;
+	}
+
+	auto shared_batch =
+	    std::make_shared<const streaming::WireBatch>(pending_batch_);
+
+	if (log_.empty()) {
+		base_seq_ = next_seq_;
+	}
+	log_.push_back(LogEntry{next_seq_, shared_batch});
+	++next_seq_;
+
+	for (const std::string &entry : pending_publication_logs_) {
+		logger->log_study(entry);
+	}
+	pending_publication_logs_.clear();
+	pending_batch_.clear_messages();
+	pending_batch_bytes_ = 0;
+	gc_locked_();
 }
 
 void GrpcPublisher::send_message(const Payload &message, std::string &topic) {
@@ -86,57 +141,53 @@ void GrpcPublisher::send_message(const Payload &message, std::string &topic) {
 
 	logger->log_study("Serializing," + message.message_id + "," + topic);
 
-	streaming::WireMessage wire;
-	wire.set_topic(topic);
-	wire.set_message_id(message.message_id);
-	wire.set_kind(static_cast<streaming::PayloadKind>(message.kind));
-	if (!message.bytes.empty()) {
-		wire.mutable_nested()->set_data(
-		    reinterpret_cast<const char *>(message.bytes.data()),
-		    message.bytes.size());
-	}
-	if (message.kind == PayloadKind::COMPLEX) {
-		wire.mutable_nested()->mutable_doubles()->Add(
-		    message.nested_payload.doubles.begin(),
-		    message.nested_payload.doubles.end());
-		wire.mutable_nested()->mutable_strings()->Add(
-		    message.nested_payload.strings.begin(),
-		    message.nested_payload.strings.end());
-	}
+	const size_t row_size_bytes = topic.size() + message.message_id.size()
+	    + sizeof(uint8_t) + message.byte_size
+	    + (message.kind == PayloadKind::COMPLEX
+	           ? message.nested_payload.double_size
+	               + message.nested_payload.string_size
+	           : 0);
 
-	const size_t wire_size = wire.ByteSizeLong();
-	auto shared_wire =
-	    std::make_shared<const streaming::WireMessage>(std::move(wire));
-
-	std::vector<std::shared_ptr<Subscriber>> subscribers;
+	bool did_flush = false;
 	{
-		std::lock_guard<std::mutex> lock(subscribers_mu_);
-		subscribers.reserve(subscribers_.size());
-		for (const auto &entry : subscribers_) {
-			subscribers.push_back(entry.second);
+		std::unique_lock<std::mutex> lock(log_mu_);
+		while (!shutting_down_.load(std::memory_order_acquire)
+		       && log_.size() >= max_shared_queue_batches_) {
+			log_cv_.wait(lock, [this]() {
+				return shutting_down_.load(std::memory_order_acquire)
+				    || log_.size() < max_shared_queue_batches_;
+			});
+		}
+
+		if (shutting_down_.load(std::memory_order_acquire)) {
+			return;
+		}
+
+		add_message_to_pending_batch_(message, topic, row_size_bytes);
+
+
+		if (pending_batch_bytes_ >= max_batch_bytes_
+		    || message.kind == PayloadKind::TERMINATION) {
+			flush_pending_batch_locked_(message.kind
+			                            == PayloadKind::TERMINATION);
+			did_flush = true;
 		}
 	}
 
-	for (const auto &subscriber : subscribers) {
-		fanout_pool_.detach_task([this, subscriber, shared_wire]() {
-			enqueue_to_subscriber_(subscriber, shared_wire);
-		});
+	if (did_flush) {
+		log_cv_.notify_all();
 	}
-	// Ensure the message is enqueued to all current subscribers before logging Publication.
-	fanout_pool_.wait();
-
-	logger->log_study("Publication," + message.message_id + "," + topic + ","
-	                  + std::to_string(message.data_size) + ","
-	                  + std::to_string(wire_size));
 }
 
 void GrpcPublisher::log_configuration() {
 	logger->log_config("[gRPC Publisher] [CONFIG_BEGIN]");
 	logger->log_config("[CONFIG] ENDPOINT=" + endpoint_);
-	logger->log_config("[CONFIG] GRPC_FANOUT_THREADS="
-	                   + std::to_string(fanout_pool_.get_thread_count()));
-	logger->log_config("[CONFIG] GRPC_MAX_QUEUE_PER_CONSUMER="
-	                   + std::to_string(max_queue_per_consumer_));
+	logger->log_config("[CONFIG] FANOUT_MODE=shared_batch_log_cursor");
+	logger->log_config("[CONFIG] GRPC_MAX_SHARED_QUEUE_BATCHES="
+	                   + std::to_string(max_shared_queue_batches_));
+	logger->log_config("[CONFIG] MAX_BATCH_BYTES="
+	                   + std::to_string(max_batch_bytes_));
+	logger->log_config("[CONFIG] BATCH_SIZE_POLICY=static_from_payload_size");
 	logger->log_config("[CONFIG] TOPICS="
 	                   + utils::get_env_var_or_default("TOPICS", ""));
 	logger->log_config("[gRPC Publisher] [CONFIG_END]");
@@ -145,38 +196,61 @@ void GrpcPublisher::log_configuration() {
 grpc::Status
 GrpcPublisher::DoGet(grpc::ServerContext *context,
                      const google::protobuf::Empty * /*request*/,
-                     grpc::ServerWriter<streaming::WireMessage> *writer) {
-	std::shared_ptr<Subscriber> subscriber;
+                     grpc::ServerWriter<streaming::WireBatch> *writer) {
+	std::shared_ptr<ConsumerState> consumer;
+	uint64_t consumer_id = 0;
 	{
-		std::lock_guard<std::mutex> lock(subscribers_mu_);
-		subscriber = std::make_shared<Subscriber>(next_subscriber_id_++,
-		                                          max_queue_per_consumer_);
-		subscribers_[subscriber->id] = subscriber;
+		std::lock_guard<std::mutex> lock(log_mu_);
+		consumer = std::make_shared<ConsumerState>();
+		consumer->next_seq = base_seq_;
+		consumer_id = next_consumer_id_++;
+		consumers_.emplace(consumer_id, consumer);
 	}
 	logger->log_info("[gRPC Publisher] Consumer connected. subscriber_id="
-	                 + std::to_string(subscriber->id));
+	                 + std::to_string(consumer_id));
 
 	while (!context->IsCancelled()) {
-		std::shared_ptr<const streaming::WireMessage> next;
+		std::shared_ptr<const streaming::WireBatch> next;
+		uint64_t next_seq_candidate = 0;
 		{
-			std::unique_lock<std::mutex> qlock(subscriber->queue_mu);
-			subscriber->queue_cv.wait_for(
-			    qlock, std::chrono::milliseconds(50), [&subscriber, context]() {
-				    return !subscriber->queue.empty()
-				        || subscriber->closed.load(std::memory_order_acquire)
-				        || context->IsCancelled();
-			    });
+			std::unique_lock<std::mutex> lock(log_mu_);
+			log_cv_.wait_for(lock, std::chrono::milliseconds(50),
+			                 [&consumer, this, context]() {
+				                 return context->IsCancelled()
+				                     || shutting_down_.load(
+				                         std::memory_order_acquire)
+				                     || consumer->next_seq < next_seq_;
+			                 });
 
-			if (subscriber->queue.empty()) {
-				if (subscriber->closed.load(std::memory_order_acquire)
-				    || context->IsCancelled()) {
+			if (context->IsCancelled()) {
+				break;
+			}
+
+			if (consumer->next_seq >= next_seq_) {
+				if (shutting_down_.load(std::memory_order_acquire)) {
 					break;
 				}
 				continue;
 			}
 
-			next = subscriber->queue.front();
-			subscriber->queue.pop_front();
+			if (consumer->next_seq < base_seq_) {
+				logger->log_error(
+				    "[gRPC Publisher] Consumer cursor behind buffer. "
+				    "subscriber_id="
+				    + std::to_string(consumer_id));
+				break;
+			}
+
+			const uint64_t index = consumer->next_seq - base_seq_;
+			if (index >= log_.size()) {
+				logger->log_error(
+				    "[gRPC Publisher] Log index out of range. subscriber_id="
+				    + std::to_string(consumer_id));
+				break;
+			}
+
+			next = log_[static_cast<size_t>(index)].batch;
+			next_seq_candidate = consumer->next_seq;
 		}
 
 		if (!next) {
@@ -186,74 +260,72 @@ GrpcPublisher::DoGet(grpc::ServerContext *context,
 		if (!writer->Write(*next)) {
 			break;
 		}
+
+		{
+			std::lock_guard<std::mutex> lock(log_mu_);
+			if (consumer->next_seq == next_seq_candidate) {
+				++consumer->next_seq;
+				gc_locked_();
+			}
+		}
+		log_cv_.notify_all();
 	}
 
 	{
-		std::lock_guard<std::mutex> lock(subscribers_mu_);
-		subscribers_.erase(subscriber->id);
+		std::lock_guard<std::mutex> lock(log_mu_);
+		consumers_.erase(consumer_id);
+		gc_locked_();
 	}
-	subscriber->closed.store(true, std::memory_order_release);
-	subscriber->queue_cv.notify_all();
+	log_cv_.notify_all();
 
 	logger->log_info("[gRPC Publisher] Consumer disconnected. subscriber_id="
-	                 + std::to_string(subscriber->id));
+	                 + std::to_string(consumer_id));
 	return grpc::Status::OK;
 }
 
-void GrpcPublisher::enqueue_to_subscriber_(
-    const std::shared_ptr<Subscriber> &subscriber,
-    const std::shared_ptr<const streaming::WireMessage> &msg) {
-	if (subscriber->closed.load(std::memory_order_acquire)) {
+void GrpcPublisher::gc_locked_() {
+	if (consumers_.empty()) {
+		log_.clear();
+		base_seq_ = next_seq_;
 		return;
 	}
 
-	{
-		std::lock_guard<std::mutex> qlock(subscriber->queue_mu);
-		if (subscriber->closed.load(std::memory_order_acquire)) {
-			return;
-		}
-
-		if (subscriber->queue.size() >= subscriber->capacity
-		    && !subscriber->queue.empty()) {
-			subscriber->queue.pop_front();
-		}
-		subscriber->queue.push_back(msg);
+	uint64_t min_next = std::numeric_limits<uint64_t>::max();
+	for (const auto &entry : consumers_) {
+		min_next = std::min(min_next, entry.second->next_seq);
 	}
-	subscriber->queue_cv.notify_one();
+	if (min_next <= base_seq_) {
+		return;
+	}
+
+	const uint64_t drop = min_next - base_seq_;
+	for (uint64_t i = 0; i < drop && !log_.empty(); ++i) {
+		log_.pop_front();
+	}
+	base_seq_ = min_next;
 }
 
 void GrpcPublisher::shutdown_server_() {
 	if (!server_started_) {
 		return;
 	}
-
-	// Ensure all pending enqueue tasks are completed before attempting a drain.
-	fanout_pool_.wait();
-	while (true) {
-		bool all_queues_empty = true;
-		{
-			std::lock_guard<std::mutex> lock(subscribers_mu_);
-			for (const auto &entry : subscribers_) {
-				std::lock_guard<std::mutex> qlock(entry.second->queue_mu);
-				if (!entry.second->queue.empty()) {
-					all_queues_empty = false;
-					break;
-				}
-			}
-		}
-
-		if (all_queues_empty) {
-			break;
-		}
-
-		std::this_thread::sleep_for(std::chrono::seconds(1));
-	}
+	shutting_down_.store(true, std::memory_order_release);
 
 	{
-		std::lock_guard<std::mutex> lock(subscribers_mu_);
-		for (auto &entry : subscribers_) {
-			entry.second->closed.store(true, std::memory_order_release);
-			entry.second->queue_cv.notify_all();
+		std::lock_guard<std::mutex> lock(log_mu_);
+		flush_pending_batch_locked_(false);
+	}
+	log_cv_.notify_all();
+
+	{
+		std::unique_lock<std::mutex> lock(log_mu_);
+		log_cv_.wait(lock,
+		             [this]() { return log_.empty() || consumers_.empty(); });
+
+		if (!log_.empty() && consumers_.empty()) {
+			logger->log_error(
+			    "[gRPC Publisher] Shutdown reached with pending batches but "
+			    "no active consumers; batches cannot be drained.");
 		}
 	}
 
@@ -262,6 +334,11 @@ void GrpcPublisher::shutdown_server_() {
 	}
 	if (server_thread_.joinable()) {
 		server_thread_.join();
+	}
+	{
+		std::lock_guard<std::mutex> lock(log_mu_);
+		consumers_.clear();
+		gc_locked_();
 	}
 	server_started_ = false;
 }
