@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package streaming;
+
+option optimize_for = SPEED;
+
+import "google/protobuf/empty.proto";
+
+enum PayloadKind {
+  TERMINATION = 0;
+  FLAT        = 1;
+  COMPLEX     = 2;
+}
+
+message WireMessage {
+  string      topic      = 1;
+  string      message_id = 2;
+  PayloadKind kind       = 3;
+  ActualData  nested     = 4 [lazy = true];
+}
+
+message WireBatch {
+  repeated WireMessage messages = 1;
+}
+
+message ActualData {
+  bytes           data    = 1;
+  repeated double doubles = 2;
+  repeated string strings = 3;
+}
+
+// One-way message stream from publisher to consumer.
+service Streamer {
+  // Consumer pulls from publisher stream: no persistence and no ack.
+  rpc DoGet (google.protobuf.Empty) returns (stream WireBatch);
+}

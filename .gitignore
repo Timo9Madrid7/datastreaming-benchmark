@@ -59,3 +59,4 @@ diagrams/
 build_all_images.*
 clean_log_tech.bat
 analyses/.ipynb_checkpoints/resources_stats-checkpoint.ipynb
+CMakePresets.json
