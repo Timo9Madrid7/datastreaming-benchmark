@@ -112,6 +112,7 @@ core/                     # C++ core logic and orchestration tooling
 technologies/             # Tech-specific Docker images + IPublisher/IConsumer impls
   arrowflight_bin_p2p/
   arrowflight_p2p/
+  grpc_p2p/
   kafka_p2p/
   nats_jetstream_p2p/
   nats_p2p/
@@ -140,7 +141,7 @@ Each implementation must:
 - Compile into a shared object.
 
 Each also has Dockerfiles for consumer/publisher images. Current implementations
-include Arrow Flight, Kafka, NATS, RabbitMQ, and ZeroMQ, with both standard and
+include Arrow Flight, gRPC, Kafka, NATS, RabbitMQ, and ZeroMQ, with both standard and
 binary-payload variants where applicable.
 
 ## Outputs and Logs
